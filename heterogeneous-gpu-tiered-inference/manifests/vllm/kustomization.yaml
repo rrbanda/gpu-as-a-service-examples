@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - inferenceservice-8b-a100.yaml
+  - inferenceservice-70b-h100-tp.yaml

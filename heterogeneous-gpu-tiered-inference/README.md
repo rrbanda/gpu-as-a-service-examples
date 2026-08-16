@@ -50,32 +50,54 @@ flowchart LR
 ## Quick Start
 
 ```bash
-# Apply all manifests (Kueue + RHOAI + vLLM models)
-./setup.sh
+# Option A: Deploy with vLLM model serving
+oc apply -k manifests/overlays/vllm/
 
-# Or, use llm-d for intelligent routing instead of plain vLLM
-./setup.sh --with-llm-d
+# Option B: Deploy with llm-d intelligent routing
+oc apply -k manifests/overlays/llm-d/
+
+# Base only (Kueue scheduling + hardware profiles, no models)
+oc apply -k manifests/base/
+```
+
+Preview before applying:
+
+```bash
+oc apply -k manifests/overlays/vllm/ --dry-run=server
 ```
 
 ## File Structure
 
 ```
 manifests/
+  base/
+    kustomization.yaml             # Composes common + kueue + rhoai
+  overlays/
+    vllm/
+      kustomization.yaml           # Base + vLLM InferenceServices
+    llm-d/
+      kustomization.yaml           # Base + llm-d LLMInferenceServices
   kueue/
-    resource-flavors.yaml         # One ResourceFlavor per GPU type (A100, H100, H200)
-    cluster-queues-strict.yaml    # Separate ClusterQueues per tier (strict pinning)
-    cluster-queue-fungible.yaml   # Alternative: single queue with flavor fallback
-    local-queues.yaml             # Per-namespace LocalQueues
+    kustomization.yaml
+    cluster-queues-strict.yaml     # Separate ClusterQueues per tier (strict pinning)
+    cluster-queue-fungible.yaml    # Alternative: single queue with flavor fallback
+    local-queues.yaml              # Per-namespace LocalQueues
   rhoai/
-    hardware-profiles.yaml        # Dashboard-facing GPU tier selection
+    kustomization.yaml
+    hardware-profiles.yaml         # Dashboard-facing GPU tier selection
   vllm/
-    inferenceservice-8b-a100.yaml   # Qwen3-8B on A100 (1 GPU)
+    kustomization.yaml
+    inferenceservice-8b-a100.yaml    # Qwen3-8B on A100 (1 GPU)
     inferenceservice-70b-h100-tp.yaml  # Llama-3-70B on H100 (TP=4)
   llm-d/
-    llmisvc-8b-a100.yaml          # Qwen3-8B with llm-d routing on A100
-    llmisvc-70b-h100-tp.yaml      # Llama-3-70B with llm-d routing on H100 (TP=4)
-setup.sh                          # One-command setup script
-GUIDE.md                          # Full step-by-step implementation guide
+    kustomization.yaml
+    llmisvc-8b-a100.yaml           # Qwen3-8B with llm-d routing on A100
+    llmisvc-70b-h100-tp.yaml       # Llama-3-70B with llm-d routing on H100 (TP=4)
+../common/                         # Shared resources (repo-level)
+  kustomization.yaml
+  kueue/
+    resource-flavors.yaml          # One ResourceFlavor per GPU type (A100, H100, H200)
+GUIDE.md                           # Full step-by-step implementation guide
 ```
 
 ## Customization
@@ -84,9 +106,9 @@ Before applying, update these values to match your cluster:
 
 | Value | Where | What to Change |
 |-------|-------|----------------|
-| `nvidia.com/gpu.product` label values | `resource-flavors.yaml` | Match your actual NFD labels (`oc get nodes -l nvidia.com/gpu.product`) |
-| GPU quotas (`nominalQuota`) | `cluster-queues-strict.yaml` | Set to your actual GPU counts per tier |
-| Namespace names (`team-a`, `team-b`) | `local-queues.yaml`, model manifests | Match your team namespaces |
+| `nvidia.com/gpu.product` label values | `../common/kueue/resource-flavors.yaml` | Match your actual NFD labels (`oc get nodes -l nvidia.com/gpu.product`) |
+| GPU quotas (`nominalQuota`) | `manifests/kueue/cluster-queues-strict.yaml` | Set to your actual GPU counts per tier |
+| Namespace names (`team-a`, `team-b`) | `manifests/kueue/local-queues.yaml`, model manifests | Match your team namespaces |
 | Model storage (`storage.key`, `storage.path`) | vLLM manifests | Point to your S3/PVC model storage |
 | Model URIs (`spec.model.uri`) | llm-d manifests | Point to your HuggingFace or local model |
 

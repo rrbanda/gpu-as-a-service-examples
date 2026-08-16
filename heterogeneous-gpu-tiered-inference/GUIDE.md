@@ -229,8 +229,10 @@ openshift-kueue-operator-69cfbf45cf-lwtpm   1/1     Running
 
 A ResourceFlavor maps a GPU type to the node labels that identify where those GPUs live. Create one per GPU tier in your cluster.
 
+These are defined in the shared `common/` directory at the repo root (`common/kueue/resource-flavors.yaml`) because they are cluster-scoped and reusable across use cases. The Kustomize base for this use case includes them automatically.
+
 ```yaml
-# resource-flavors.yaml
+# common/kueue/resource-flavors.yaml
 ---
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: ResourceFlavor
@@ -257,11 +259,13 @@ spec:
     nvidia.com/gpu.product: NVIDIA-H200-141GB-HBM3e
 ```
 
-Apply:
+Apply individually:
 
 ```bash
-oc apply -f resource-flavors.yaml
+oc apply -f ../common/kueue/resource-flavors.yaml
 ```
+
+Or as part of the full Kustomize overlay (see [Apply Everything at Once](#apply-everything-at-once) below).
 
 Verify:
 
@@ -291,7 +295,7 @@ The ClusterQueue defines how many GPUs of each type are available for scheduling
 | **Single ClusterQueue, multiple flavors** | Models are flexible about GPU type; you want Kueue to pick the best available | If gpu-h100 is full, Kueue can admit on gpu-a100 (fungibility) |
 | **Separate ClusterQueues per tier** | Strict pinning required; A100 models must never land on H100 and vice versa | No cross-tier fallback; each queue admits only its own flavor |
 
-This guide shows **strict pinning** (separate queues per tier) since the customer requirement is to pin models to specific GPU types. The alternative is shown at the end.
+This guide shows **strict pinning** (separate queues per tier) since the goal is to pin models to specific GPU types. The alternative is shown at the end.
 
 ### Pattern A: Strict Tier Pinning (Recommended for This Use Case)
 
@@ -911,6 +915,31 @@ llm-d is orthogonal to GPU-tier placement — it does not care which GPU type a 
 | No KV cache awareness | Prefix-cache-scorer routes similar prompts to the same replica |
 
 The EPP's default scoring gives `prefix-cache-scorer` a weight of 3 and `queue-scorer` a weight of 2, prioritizing cache reuse over even load distribution to minimize redundant computation.
+
+---
+
+## Apply Everything at Once
+
+Instead of applying each manifest individually as shown in Steps 1-7, you can use Kustomize to apply everything in one command. This use case provides a base `kustomization.yaml` and two overlays under `manifests/`:
+
+```bash
+# Option A: Base (Kueue scheduling + hardware profiles) + vLLM models
+oc apply -k manifests/overlays/vllm/
+
+# Option B: Base (Kueue scheduling + hardware profiles) + llm-d models
+oc apply -k manifests/overlays/llm-d/
+
+# Base only (no models — just the scheduling infrastructure)
+oc apply -k manifests/base/
+```
+
+Preview what will be applied:
+
+```bash
+oc apply -k manifests/overlays/vllm/ --dry-run=server
+```
+
+> **Note:** The `oc patch` commands in Step 0 (activating Kueue in RHOAI) and the namespace labeling must still be done manually before running Kustomize, since they modify existing resources rather than creating new ones.
 
 ---
 
