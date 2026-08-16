@@ -1,0 +1,24 @@
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: gpu-a100
+spec:
+  nodeLabels:
+    nvidia.com/gpu.product: A100-SXM4-80GB
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: gpu-h100
+spec:
+  nodeLabels:
+    nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: gpu-h200
+spec:
+  nodeLabels:
+    nvidia.com/gpu.product: NVIDIA-H200-141GB-HBM3e

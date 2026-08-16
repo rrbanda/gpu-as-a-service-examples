@@ -1,0 +1,47 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: qwen3-8b-llmd
+  namespace: team-a
+  labels:
+    kueue.x-k8s.io/queue-name: a100-queue
+  annotations:
+    security.opendatahub.io/enable-auth: "true"
+spec:
+  replicas: 2
+  model:
+    uri: hf://RedHatAI/Qwen3-8B-FP8-dynamic
+    name: RedHatAI/Qwen3-8B-FP8-dynamic
+  router:
+    route: {}
+    gateway: {}
+    scheduler:
+      config:
+        inline:
+          apiVersion: inference.networking.x-k8s.io/v1alpha1
+          kind: EndpointPickerConfig
+          plugins:
+          - type: prefix-cache-scorer
+          - type: queue-scorer
+          schedulingProfiles:
+          - name: default
+            plugins:
+            - pluginRef: queue-scorer
+              weight: 2
+            - pluginRef: prefix-cache-scorer
+              weight: 3
+  template:
+    containers:
+    - name: main
+      args:
+      - --max-model-len=8192
+      - --enable-prefix-caching
+      resources:
+        limits:
+          cpu: "4"
+          memory: 32Gi
+          nvidia.com/gpu: "1"
+        requests:
+          cpu: "2"
+          memory: 16Gi
+          nvidia.com/gpu: "1"

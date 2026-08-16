@@ -1,0 +1,24 @@
+# Alternative: Single ClusterQueue with flavor fungibility.
+# Kueue tries gpu-h100 first (listed first), falls back to gpu-a100.
+# Use when workloads can run on either GPU type and you want to maximize utilization.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: mixed-gpu-pool
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: gpu-h100
+      resources:
+      - name: "nvidia.com/gpu"
+        nominalQuota: 16
+    - name: gpu-a100
+      resources:
+      - name: "nvidia.com/gpu"
+        nominalQuota: 16
+  preemption:
+    withinClusterQueue: LowerPriority
+  fairSharing:
+    weight: 1

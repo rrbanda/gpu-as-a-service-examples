@@ -1,0 +1,78 @@
+---
+apiVersion: dashboard.opendatahub.io/v1alpha1
+kind: HardwareProfile
+metadata:
+  name: a100-1gpu
+  namespace: redhat-ods-applications
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  displayName: "A100 Inference (1 GPU)"
+  description: "Single A100-80GB for models up to 13B parameters"
+  enabled: true
+  identifiers:
+  - displayName: GPU
+    identifier: nvidia.com/gpu
+    defaultCount: 1
+    minCount: 1
+    maxCount: 1
+  defaultResources:
+    requests:
+      cpu: "4"
+      memory: "32Gi"
+    limits:
+      cpu: "8"
+      memory: "64Gi"
+  localQueue: a100-queue
+---
+apiVersion: dashboard.opendatahub.io/v1alpha1
+kind: HardwareProfile
+metadata:
+  name: h100-1gpu
+  namespace: redhat-ods-applications
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  displayName: "H100 Inference (1 GPU)"
+  description: "Single H100-80GB for models up to 30B parameters"
+  enabled: true
+  identifiers:
+  - displayName: GPU
+    identifier: nvidia.com/gpu
+    defaultCount: 1
+    minCount: 1
+    maxCount: 1
+  defaultResources:
+    requests:
+      cpu: "4"
+      memory: "32Gi"
+    limits:
+      cpu: "8"
+      memory: "64Gi"
+  localQueue: h100-queue
+---
+apiVersion: dashboard.opendatahub.io/v1alpha1
+kind: HardwareProfile
+metadata:
+  name: h100-4gpu-tp
+  namespace: redhat-ods-applications
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  displayName: "H100 Large Model (4 GPU, Tensor Parallel)"
+  description: "4x H100-80GB for 70B+ parameter models with tensor parallelism"
+  enabled: true
+  identifiers:
+  - displayName: GPU
+    identifier: nvidia.com/gpu
+    defaultCount: 4
+    minCount: 4
+    maxCount: 8
+  defaultResources:
+    requests:
+      cpu: "16"
+      memory: "128Gi"
+    limits:
+      cpu: "32"
+      memory: "256Gi"
+  localQueue: h100-queue

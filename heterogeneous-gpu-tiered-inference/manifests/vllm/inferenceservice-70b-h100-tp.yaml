@@ -1,0 +1,40 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama3-70b
+  namespace: team-a
+  labels:
+    kueue.x-k8s.io/queue-name: h100-queue
+    opendatahub.io/dashboard: "true"
+  annotations:
+    openshift.io/display-name: "Llama-3-70B on H100 (TP=4)"
+    serving.knative.openshift.io/enablePassthrough: "true"
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 2
+    model:
+      modelFormat:
+        name: vLLM
+      runtime: vllm-runtime
+      resources:
+        requests:
+          cpu: "16"
+          memory: "128Gi"
+          nvidia.com/gpu: "4"
+        limits:
+          cpu: "32"
+          memory: "256Gi"
+          nvidia.com/gpu: "4"
+      args:
+      - --tensor-parallel-size=4
+      - --distributed-executor-backend=mp
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.9
+      storage:
+        key: aws-connection-model-storage
+        path: models/Meta-Llama-3-70B-Instruct/
+    tolerations:
+    - effect: NoSchedule
+      key: nvidia.com/gpu
+      operator: Exists

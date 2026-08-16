@@ -1,0 +1,38 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen3-8b
+  namespace: team-a
+  labels:
+    kueue.x-k8s.io/queue-name: a100-queue
+    opendatahub.io/dashboard: "true"
+  annotations:
+    openshift.io/display-name: "Qwen3-8B on A100"
+    serving.knative.openshift.io/enablePassthrough: "true"
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 3
+    model:
+      modelFormat:
+        name: vLLM
+      runtime: vllm-runtime
+      resources:
+        requests:
+          cpu: "4"
+          memory: "32Gi"
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: "64Gi"
+          nvidia.com/gpu: "1"
+      args:
+      - --max-model-len=8192
+      - --distributed-executor-backend=mp
+      storage:
+        key: aws-connection-model-storage
+        path: models/Qwen3-8B-FP8-dynamic/
+    tolerations:
+    - effect: NoSchedule
+      key: nvidia.com/gpu
+      operator: Exists

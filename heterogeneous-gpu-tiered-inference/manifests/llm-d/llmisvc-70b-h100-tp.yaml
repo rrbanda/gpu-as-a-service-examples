@@ -1,0 +1,50 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: llama3-70b-llmd
+  namespace: team-a
+  labels:
+    kueue.x-k8s.io/queue-name: h100-queue
+  annotations:
+    security.opendatahub.io/enable-auth: "true"
+spec:
+  replicas: 2
+  model:
+    uri: hf://RedHatAI/Meta-Llama-3-70B-Instruct-FP8-dynamic
+    name: RedHatAI/Meta-Llama-3-70B-Instruct-FP8-dynamic
+  router:
+    route: {}
+    gateway: {}
+    scheduler:
+      config:
+        inline:
+          apiVersion: inference.networking.x-k8s.io/v1alpha1
+          kind: EndpointPickerConfig
+          plugins:
+          - type: prefix-cache-scorer
+          - type: queue-scorer
+          schedulingProfiles:
+          - name: default
+            plugins:
+            - pluginRef: queue-scorer
+              weight: 2
+            - pluginRef: prefix-cache-scorer
+              weight: 3
+  template:
+    containers:
+    - name: main
+      args:
+      - --tensor-parallel-size=4
+      - --distributed-executor-backend=mp
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.9
+      - --enable-prefix-caching
+      resources:
+        limits:
+          cpu: "16"
+          memory: 128Gi
+          nvidia.com/gpu: "4"
+        requests:
+          cpu: "8"
+          memory: 64Gi
+          nvidia.com/gpu: "4"

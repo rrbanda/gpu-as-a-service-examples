@@ -1,0 +1,42 @@
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: a100-inference
+spec:
+  cohort: gpu-shared-pool
+  namespaceSelector: {}
+  resourceGroups:
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: gpu-a100
+      resources:
+      - name: "nvidia.com/gpu"
+        nominalQuota: 16
+        borrowingLimit: 0
+  preemption:
+    withinClusterQueue: LowerPriority
+    reclaimWithinCohort: Any
+  fairSharing:
+    weight: 1
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: h100-inference
+spec:
+  cohort: gpu-shared-pool
+  namespaceSelector: {}
+  resourceGroups:
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: gpu-h100
+      resources:
+      - name: "nvidia.com/gpu"
+        nominalQuota: 16
+        borrowingLimit: 0
+  preemption:
+    withinClusterQueue: LowerPriority
+    reclaimWithinCohort: Any
+  fairSharing:
+    weight: 1

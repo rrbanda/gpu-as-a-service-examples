@@ -1,0 +1,24 @@
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: a100-queue
+  namespace: team-a
+spec:
+  clusterQueue: a100-inference
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: h100-queue
+  namespace: team-a
+spec:
+  clusterQueue: h100-inference
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: h100-queue
+  namespace: team-b
+spec:
+  clusterQueue: h100-inference
