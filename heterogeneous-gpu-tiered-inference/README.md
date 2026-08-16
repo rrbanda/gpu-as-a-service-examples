@@ -11,7 +11,7 @@
 |-------------|--------|-----------|
 | GPU-tier matching | **Supported (GA)** | ResourceFlavor nodeLabels + ClusterQueue admission |
 | Intra-cluster placement | **Supported (GA)** | Hardware Profile -> LocalQueue -> ClusterQueue -> ResourceFlavor |
-| Tensor parallelism | **Partially Supported** | vLLM `--tensor-parallel-size` works; topology-aware scheduling (TAS) not yet in RHOAI |
+| Tensor parallelism | **Partially Supported** | vLLM `--tensor-parallel-size` works; topology-aware scheduling (TAS) is upstream-only — not available in RHOAI 3.4 at any support level |
 | Intelligent request routing | **Supported (GA)** | llm-d EPP with queue-scorer + prefix-cache-scorer |
 
 ## Quick Start
@@ -1096,11 +1096,11 @@ curl -sk -G -H "Authorization: Bearer $TOKEN" \
 
 ### Topology-Aware Scheduling (TAS)
 
-**Status:** Exists in upstream Kueue, **not shipped** in RHBoK or RHOAI.
+**Status:** Upstream Kueue only. **Not available** in Red Hat Build of Kueue or RHOAI 3.4 at any support level (not GA, not Tech Preview, not Dev Preview). There is no way to enable TAS on RHOAI 3.4 today.
 
-**Impact:** When a pod requests 4 GPUs for tensor parallelism, kube-scheduler allocates 4 GPUs on the same node — but without TAS, it cannot guarantee those 4 GPUs share the same NVLink/NVSwitch domain. On nodes with non-uniform GPU topology, this can result in some GPU-to-GPU communication falling back to PCIe instead of NVLink.
+**What this means:** Tensor parallelism itself works fully — a pod requests 4 GPUs, vLLM splits the model with `--tensor-parallel-size=4`, and Kueue places the pod on the correct GPU tier via ResourceFlavor. The model runs correctly across all 4 GPUs. What TAS would add is topology optimization *within* the node: guaranteeing that the 4 GPUs share the same NVLink/NVSwitch domain for optimal interconnect bandwidth. Without TAS, kube-scheduler picks any 4 available GPUs on the node.
 
-**Practical impact:** On H100 SXM nodes (all 8 GPUs share one NVLink domain), this is a non-issue. On A100 nodes with mixed PCIe/SXM configurations, it could affect multi-GPU training performance.
+**Practical impact:** On H100 SXM nodes (all 8 GPUs share one NVLink domain), the absence of TAS is a non-issue — any 4 GPUs are already in the same domain. On A100 nodes with mixed PCIe/SXM configurations, some GPU-to-GPU communication could fall back to PCIe instead of NVLink, reducing inter-GPU bandwidth for TP workloads.
 
 **Mitigation:** Use H100 SXM nodes for TP workloads. If A100 TP is needed, manually pin to nodes with uniform NVLink topology using a dedicated ResourceFlavor with additional node labels.
 
