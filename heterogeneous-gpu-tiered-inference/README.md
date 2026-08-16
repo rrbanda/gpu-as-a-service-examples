@@ -11,7 +11,7 @@
 |-------------|--------|-----------|
 | GPU-tier matching | **Supported (GA)** | ResourceFlavor nodeLabels + ClusterQueue admission |
 | Intra-cluster placement | **Supported (GA)** | Hardware Profile -> LocalQueue -> ClusterQueue -> ResourceFlavor |
-| Tensor parallelism | **Partially Supported** | vLLM `--tensor-parallel-size` works; topology-aware scheduling (TAS) is upstream-only — not available in RHOAI 3.4 at any support level |
+| Tensor parallelism | **Partially Supported** | vLLM `--tensor-parallel-size` works; topology-aware scheduling (TAS) exists in upstream Kueue but is not included in Red Hat Build of Kueue or RHOAI 3.4 |
 | Intelligent request routing | **Supported (GA)** | llm-d EPP with queue-scorer + prefix-cache-scorer |
 
 ## Quick Start
@@ -1096,7 +1096,7 @@ curl -sk -G -H "Authorization: Bearer $TOKEN" \
 
 ### Topology-Aware Scheduling (TAS)
 
-**Status:** Upstream Kueue only. **Not available** in Red Hat Build of Kueue or RHOAI 3.4 at any support level (not GA, not Tech Preview, not Dev Preview). There is no way to enable TAS on RHOAI 3.4 today.
+**Status:** TAS is a beta feature in upstream Kueue (kubernetes-sigs/kueue). It is **not included** in Red Hat Build of Kueue (RHBoK) 1.3 or RHOAI 3.4 at any support level — not GA, not Tech Preview, not Dev Preview. Since RHOAI depends on RHBoK for all Kueue functionality, there is no way to enable TAS on RHOAI 3.4 today.
 
 **What this means:** Tensor parallelism itself works fully — a pod requests 4 GPUs, vLLM splits the model with `--tensor-parallel-size=4`, and Kueue places the pod on the correct GPU tier via ResourceFlavor. The model runs correctly across all 4 GPUs. What TAS would add is topology optimization *within* the node: guaranteeing that the 4 GPUs share the same NVLink/NVSwitch domain for optimal interconnect bandwidth. Without TAS, kube-scheduler picks any 4 available GPUs on the node.
 
