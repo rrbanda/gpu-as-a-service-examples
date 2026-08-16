@@ -1096,7 +1096,7 @@ curl -sk -G -H "Authorization: Bearer $TOKEN" \
 
 ### Topology-Aware Scheduling (TAS)
 
-**Status:** TAS is a beta feature in upstream Kueue (kubernetes-sigs/kueue). It is **not included** in Red Hat Build of Kueue (RHBoK) 1.3 or RHOAI 3.4 at any support level — not GA, not Tech Preview, not Dev Preview. Since RHOAI depends on RHBoK for all Kueue functionality, there is no way to enable TAS on RHOAI 3.4 today.
+**Status:** TAS is a beta feature in upstream Kueue (kubernetes-sigs/kueue). It is **not included** in any release of Red Hat Build of Kueue (RHBoK) to date, including the latest RHBoK 1.4 (upstream Kueue 0.18). It is not available at any support level — not GA, not Tech Preview, not Dev Preview. The RHBoK operator is independent from RHOAI and can be upgraded separately, but no current RHBoK version ships TAS.
 
 **What this means:** Tensor parallelism itself works fully — a pod requests 4 GPUs, vLLM splits the model with `--tensor-parallel-size=4`, and Kueue places the pod on the correct GPU tier via ResourceFlavor. The model runs correctly across all 4 GPUs. What TAS would add is topology optimization *within* the node: guaranteeing that the 4 GPUs share the same NVLink/NVSwitch domain for optimal interconnect bandwidth. Without TAS, kube-scheduler picks any 4 available GPUs on the node.
 
