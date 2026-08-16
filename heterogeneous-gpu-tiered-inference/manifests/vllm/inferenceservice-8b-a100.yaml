@@ -28,7 +28,6 @@ spec:
           nvidia.com/gpu: "1"
       args:
       - --max-model-len=8192
-      - --distributed-executor-backend=mp
       storage:
         key: aws-connection-model-storage
         path: models/Qwen3-8B-FP8-dynamic/

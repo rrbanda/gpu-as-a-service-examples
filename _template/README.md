@@ -47,7 +47,6 @@ manifests/
   <component>/
     kustomization.yaml
     <manifest>.yaml            # Description
-GUIDE.md                       # Full step-by-step implementation guide
 ```
 
 ## Customization
@@ -56,9 +55,13 @@ GUIDE.md                       # Full step-by-step implementation guide
 |-------|-------|----------------|
 | *value* | `<file>` | Description |
 
-## Full Guide
+---
 
-See **[GUIDE.md](GUIDE.md)** for the complete step-by-step walkthrough with architecture diagrams, design decisions, verification commands, and known gaps.
+## Step-by-Step Implementation Guide
+
+*(Include the full walkthrough here: architecture diagrams, design decisions, inline YAML for each manifest, `oc apply` commands, verification commands, and known gaps.)*
+
+---
 
 ## References
 

@@ -4,7 +4,7 @@ kind: ClusterQueue
 metadata:
   name: a100-inference
 spec:
-  cohort: gpu-shared-pool
+  cohortName: gpu-shared-pool
   namespaceSelector: {}
   resourceGroups:
   - coveredResources: ["nvidia.com/gpu"]
@@ -25,7 +25,7 @@ kind: ClusterQueue
 metadata:
   name: h100-inference
 spec:
-  cohort: gpu-shared-pool
+  cohortName: gpu-shared-pool
   namespaceSelector: {}
   resourceGroups:
   - coveredResources: ["nvidia.com/gpu"]

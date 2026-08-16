@@ -6,6 +6,7 @@ kind: ClusterQueue
 metadata:
   name: mixed-gpu-pool
 spec:
+  cohortName: gpu-shared-pool
   namespaceSelector: {}
   resourceGroups:
   - coveredResources: ["nvidia.com/gpu"]

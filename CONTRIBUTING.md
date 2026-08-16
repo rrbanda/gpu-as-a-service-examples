@@ -24,11 +24,9 @@ resources:
 
 4. **Add overlays** under `overlays/` if the use case has deployment variants (e.g., different model servers, different GPU configurations).
 
-5. **Fill in `README.md`** — follow the template sections. Include: What This Solves table, architecture diagram, prerequisites, quick start with `oc apply -k`, file structure, customization table, and references.
+5. **Fill in `README.md`** — follow the template sections. Include: What This Solves table, architecture diagrams, prerequisites, quick start with `oc apply -k`, file structure, customization table, step-by-step guide with inline YAML, verification commands, known gaps, and references.
 
-6. **Fill in `GUIDE.md`** — step-by-step walkthrough with inline YAML, `oc apply` commands, verification commands, and known gaps.
-
-7. **Add a row** to the Use Cases table in the root `README.md`.
+6. **Add a row** to the Use Cases table in the root `README.md`.
 
 8. **Test on a cluster** before submitting.
 
@@ -42,12 +40,10 @@ resources:
 
 Before opening a pull request, verify:
 
-- [ ] Directory follows the standard layout (`README.md`, `GUIDE.md`, `kustomization.yaml`, `manifests/`)
+- [ ] Directory follows the standard layout (`README.md`, `kustomization.yaml`, `manifests/`)
 - [ ] `kustomization.yaml` is valid — `oc kustomize .` produces the expected output
 - [ ] If overlays exist, each one builds cleanly — `oc kustomize overlays/<variant>/`
-- [ ] `README.md` has all sections: What This Solves, Architecture, Prerequisites, Quick Start, File Structure, Customization, References
-- [ ] `GUIDE.md` walks through every manifest with inline YAML, apply commands, and verification
-- [ ] Known gaps and caveats are documented
+- [ ] `README.md` has all sections: What This Solves, Architecture, Prerequisites, Quick Start, File Structure, Customization, step-by-step guide, verification, known gaps, and References
 - [ ] Root `README.md` Use Cases table has been updated with a new row
 - [ ] Tested on a real OpenShift cluster with the stated prerequisites
 - [ ] No hardcoded secrets, tokens, or cluster-specific values in committed manifests

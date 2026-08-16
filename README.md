@@ -42,11 +42,9 @@ gpu-as-a-service-examples/
       resource-flavors.yaml              # GPU tier definitions (A100, H100, H200)
   _template/                             # Copy this to start a new use case
     README.md
-    GUIDE.md
     manifests/base/kustomization.yaml
   heterogeneous-gpu-tiered-inference/    # First use case
     README.md
-    GUIDE.md
     manifests/
       base/kustomization.yaml           # Kustomize base (common + kueue + rhoai)
       overlays/vllm/kustomization.yaml  # Add vLLM InferenceServices
@@ -66,8 +64,7 @@ gpu-as-a-service-examples/
 | [Heterogeneous GPU Tiered Inference](heterogeneous-gpu-tiered-inference/) | Pin models to specific GPU tiers (A100/H100/H200) in a mixed-GPU cluster, with optional intelligent request routing | Kueue ResourceFlavors, Hardware Profiles, vLLM tensor parallelism, llm-d EPP | Intermediate |
 
 Each use case includes:
-- **README.md** — Problem statement, architecture diagram, prerequisites, quick start, and customization guide
-- **GUIDE.md** — Full step-by-step implementation walkthrough (~1,000+ lines) with inline YAML, verification commands, and known gaps
+- **README.md** — Problem statement, architecture diagrams, step-by-step implementation guide with inline YAML, verification commands, and known gaps
 - **manifests/** — All Kubernetes/OpenShift YAML organized with Kustomize bases and overlays
 
 ---
@@ -146,7 +143,7 @@ oc apply -k heterogeneous-gpu-tiered-inference/manifests/overlays/vllm/
 
 ### 5. Verify
 
-Follow the **Verification** section in the use case's `GUIDE.md` for `oc get` commands and `curl` tests.
+Follow the **Verification** section in the use case's `README.md` for `oc get` commands and `curl` tests.
 
 ---
 
@@ -183,8 +180,7 @@ Every use case follows this consistent structure:
 
 ```
 <use-case>/
-  README.md                # Problem statement, architecture, prerequisites, quick start
-  GUIDE.md                 # Full step-by-step implementation guide
+  README.md                # Full guide: problem statement, architecture, step-by-step, verification
   manifests/
     base/
       kustomization.yaml   # Kustomize base (includes ../common + core manifests)
@@ -205,9 +201,8 @@ Every use case follows this consistent structure:
 3. Add a `kustomization.yaml` in each component directory listing its resources.
 4. Create `manifests/base/kustomization.yaml` composing `../../../common` + your components.
 5. Add overlays under `manifests/overlays/` if you have deployment variants.
-6. Fill in `README.md` (problem statement, architecture, prerequisites, quick start, customization).
-7. Fill in `GUIDE.md` (step-by-step with inline YAML, verification, and known gaps).
-8. Add a row to the [Use Cases](#use-cases) table in this README.
+6. Fill in `README.md` (problem statement, architecture, prerequisites, quick start, step-by-step guide with inline YAML, verification, and known gaps).
+7. Add a row to the [Use Cases](#use-cases) table in this README.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full checklist and naming conventions.
 
