@@ -16,6 +16,36 @@
 
 ## Quick Start
 
+### Manual prerequisites (one-time setup before Kustomize)
+
+These steps modify existing cluster resources and cannot be captured in Kustomize manifests:
+
+```bash
+# 1. Create team namespaces
+oc create namespace team-a
+oc create namespace team-b
+
+# 2. Label namespaces for Kueue enforcement
+oc label namespace team-a kueue.openshift.io/managed=true --overwrite
+oc label namespace team-b kueue.openshift.io/managed=true --overwrite
+
+# 3. Activate Kueue in RHOAI (if not already done)
+oc patch datasciencecluster default-dsc \
+  --type='merge' \
+  -p '{"spec":{"components":{"kueue":{"managementState":"Unmanaged"}}}}' \
+  -n redhat-ods-operator
+
+oc patch odhdashboardconfig odh-dashboard-config \
+  -n redhat-ods-applications \
+  --type merge \
+  -p '{"spec":{"dashboardConfig":{"disableKueue":false}}}'
+
+# 4. For vLLM overlay: create S3 data connection secret (see Step 5 for details)
+# 5. For llm-d overlay: configure Gateway API + Authorino (see Step 7a for details)
+```
+
+### Apply with Kustomize
+
 ```bash
 # Option A: Deploy with vLLM model serving
 oc apply -k manifests/overlays/vllm/
@@ -74,9 +104,9 @@ Before applying, update these values to match your cluster:
 |-------|-------|----------------|
 | `nvidia.com/gpu.product` label values | `../common/kueue/resource-flavors.yaml` | Match your actual NFD labels (`oc get nodes -l nvidia.com/gpu.product`) |
 | GPU quotas (`nominalQuota`) | `manifests/kueue/cluster-queues-strict.yaml` | Set to your actual GPU counts per tier |
-| Namespace names (`team-a`, `team-b`) | `manifests/kueue/local-queues.yaml`, model manifests | Match your team namespaces |
-| Model storage (`storage.key`, `storage.path`) | vLLM manifests | Point to your S3/PVC model storage |
-| Model URIs (`spec.model.uri`) | llm-d manifests | Point to your HuggingFace or local model |
+| Namespace names (`team-a`, `team-b`) | `manifests/kueue/local-queues.yaml`, model manifests | Match your team namespaces (must be created and labeled before applying — see Quick Start) |
+| Model storage (`storage.key`, `storage.path`) | vLLM manifests | Point to your S3/PVC model storage (Secret must exist in the namespace — see Step 5) |
+| Model URIs (`spec.model.uri`) | llm-d manifests | Point to your HuggingFace URI (`hf://org/model`) or local model (`s3://` or `pvc://`) — see Step 7b |
 
 ---
 
@@ -468,14 +498,23 @@ spec:
 
 ## Step 3 — Create LocalQueues Per Team Namespace
 
-Each team namespace gets a LocalQueue that points to the appropriate ClusterQueue. The namespace must be labeled for Kueue enforcement.
+Each team namespace gets a LocalQueue that points to the appropriate ClusterQueue. The namespaces must exist and be labeled for Kueue enforcement.
 
-### Label the namespace
+### Create namespaces (if they don't already exist)
+
+```bash
+oc create namespace team-a
+oc create namespace team-b
+```
+
+### Label the namespaces for Kueue enforcement
 
 ```bash
 oc label namespace team-a kueue.openshift.io/managed=true --overwrite
 oc label namespace team-b kueue.openshift.io/managed=true --overwrite
 ```
+
+> **Why this label matters:** Once a namespace has `kueue.openshift.io/managed=true`, the validating webhook rejects any workload (InferenceService, Notebook, PyTorchJob, RayCluster, RayJob) that does not carry a `kueue.x-k8s.io/queue-name` label. This ensures nothing bypasses the queuing system.
 
 ### Create LocalQueues
 
@@ -526,7 +565,7 @@ team-a      h100-queue    h100-inference   0         0
 team-b      h100-queue    h100-inference   0         0
 ```
 
-> **How the webhook works:** Once a namespace has `kueue.openshift.io/managed=true`, the validating webhook rejects any workload (InferenceService, Notebook, PyTorchJob, RayCluster, RayJob) that does not carry a `kueue.x-k8s.io/queue-name` label. This ensures nothing bypasses the queuing system.
+> **Note:** Namespace creation and labeling are manual prerequisites that must be done before running `oc apply -k`. The Kustomize overlays create the Kueue and RHOAI resources but do not create or modify namespaces.
 
 ---
 
@@ -629,6 +668,53 @@ Verify from the RHOAI dashboard: navigate to **Settings -> Model resources and o
 ---
 
 ## Step 5 — Deploy a Small Model on A100 via vLLM
+
+### Prerequisites for vLLM Model Serving
+
+**Verify the vLLM ServingRuntime exists:** RHOAI 3.4 ships `vllm-runtime` as a pre-installed ClusterServingRuntime. Confirm it is available:
+
+```bash
+oc get clusterservingruntimes | grep vllm
+```
+
+```
+vllm-runtime   Supported   True    8h
+```
+
+If `vllm-runtime` does not appear, verify that RHOAI model serving is enabled in your DataScienceCluster configuration.
+
+**Create the S3 Data Connection secret:** The vLLM InferenceService references a Secret named `aws-connection-model-storage` for model weight storage. Create this in your team namespace using one of these methods:
+
+*Option A — Via RHOAI Dashboard:* Navigate to **Data Science Projects -> your project -> Data connections -> Add data connection**. Fill in your S3-compatible endpoint, bucket, and credentials. RHOAI creates the Secret automatically.
+
+*Option B — Via CLI:*
+
+```bash
+oc apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-connection-model-storage
+  namespace: team-a
+  labels:
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/managed: "true"
+  annotations:
+    opendatahub.io/connection-type: s3
+    openshift.io/display-name: "Model Storage"
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: "<your-access-key>"
+  AWS_SECRET_ACCESS_KEY: "<your-secret-key>"
+  AWS_S3_ENDPOINT: "<your-s3-endpoint>"
+  AWS_S3_BUCKET: "<your-bucket-name>"
+  AWS_DEFAULT_REGION: "<your-region>"
+EOF
+```
+
+Replace the placeholder values with your actual S3-compatible storage credentials (AWS S3, MinIO, Ceph Object Gateway, etc.).
+
+### Deploy the InferenceService
 
 Deploy an 8B parameter model using the standard vLLM ServingRuntime. The `kueue.x-k8s.io/queue-name` label tells Kueue to admit this workload through the A100 queue, which routes it to A100 nodes via the ResourceFlavor.
 
@@ -815,7 +901,24 @@ llm-d adds value on top of the Kueue placement layer. While Kueue decides **whic
 
 For llm-d deployments, you use `LLMInferenceService` instead of `InferenceService`. This replaces Steps 5 and 6 if you want llm-d routing.
 
+### Additional prerequisites for llm-d
+
+llm-d requires these operators to be installed (in addition to the shared prerequisites from Step 0):
+
+| Operator | Purpose |
+|----------|---------|
+| LeaderWorkerSet Operator | Manages multi-replica vLLM deployments as a coordinated set |
+| Red Hat Connectivity Link 1.1.1+ | Provides Gateway API and Authorino for authentication |
+
+Verify the operators are installed:
+
+```bash
+oc get csv -n openshift-operators | grep -E "leadeworkerset|connectivity-link"
+```
+
 ### 7a. Configure Gateway and Authentication
+
+> **Important:** This is a one-time cluster setup. If you are using the `oc apply -k manifests/overlays/llm-d/` Kustomize approach, you must complete this step manually first — these resources modify existing cluster state and are not included in the Kustomize overlay.
 
 Set up the Gateway API and Connectivity Link (one-time setup):
 
@@ -856,6 +959,15 @@ spec:
       enabled: false
 EOF
 ```
+
+### Model URIs in llm-d
+
+llm-d uses `hf://` URIs to download model weights directly from HuggingFace Hub at pod startup. This requires:
+
+- **Cluster egress to `huggingface.co`** — the vLLM pods must be able to reach the HuggingFace CDN to download model weights.
+- **No authentication needed for public models** — the `RedHatAI/` models used in this guide are public and require no HuggingFace token.
+- **For gated models** (e.g., `meta-llama/Llama-3-70B`), create a Secret with your HuggingFace token and reference it in the container environment.
+- **For air-gapped clusters**, use an S3 or PVC URI instead of `hf://`. Change `spec.model.uri` to point to your internal model registry (e.g., `s3://bucket/path/` or `pvc://model-pvc/path/`).
 
 ### 7b. Deploy 8B Model with llm-d on A100
 
@@ -1008,7 +1120,13 @@ Preview what will be applied:
 oc apply -k manifests/overlays/vllm/ --dry-run=server
 ```
 
-> **Note:** The `oc patch` commands in Step 0 (activating Kueue in RHOAI) and the namespace labeling must still be done manually before running Kustomize, since they modify existing resources rather than creating new ones.
+> **Important — Manual steps required before Kustomize:**
+> 1. Activate Kueue in RHOAI (`oc patch` commands from Step 0)
+> 2. Create and label team namespaces (`oc create namespace` + `oc label` from Step 3)
+> 3. For vLLM overlay: create the S3 Data Connection Secret in the team namespace (Step 5)
+> 4. For llm-d overlay: configure Gateway API and Authorino (Step 7a)
+>
+> These steps modify existing cluster resources or create secrets and cannot be captured in declarative Kustomize manifests.
 
 ---
 
