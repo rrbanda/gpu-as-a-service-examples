@@ -1,10 +1,10 @@
 # GPU as a Service — Examples
 
-Reference implementations for **GPU-as-a-Service patterns on Red Hat OpenShift AI**. This repository provides production-ready Kustomize manifests, architecture diagrams, and step-by-step guides for deploying and managing GPU workloads at scale on OpenShift.
+Reference implementations for **GPU-as-a-Service patterns on Red Hat OpenShift AI**. This repository provides production-ready Kustomize manifests, architecture diagrams, and step-by-step guides for deploying and managing GPU workloads at scale on OpenShift AI.
 
 ## Why This Repo Exists
 
-Organizations running mixed-GPU OpenShift clusters face common challenges:
+Organizations running mixed-GPU OpenShift AI clusters face common challenges:
 
 - **GPU tier pinning** — Ensuring models land on the right GPU type (A100 vs H100 vs H200) without manual node selection
 - **Quota and fair sharing** — Controlling how many GPUs each team can consume per tier

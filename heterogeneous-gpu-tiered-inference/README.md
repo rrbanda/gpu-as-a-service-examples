@@ -1,18 +1,18 @@
 # Heterogeneous GPU Tiered Inference
 
-> **Scenario:** A single OpenShift cluster with mixed NVIDIA accelerators (A100 + H100/H200).
+> **Scenario:** A single OpenShift AI cluster with mixed NVIDIA accelerators (A100 + H100/H200).
 > Pin each model to the appropriate GPU tier, support tensor parallelism for large models, and add intelligent inference routing — all without manual node targeting.
 >
 > **Platform:** Red Hat OpenShift AI 3.4 · Red Hat Build of Kueue · vLLM · llm-d
 
 ## What This Solves
 
-| Requirement | Status | Mechanism |
-|-------------|--------|-----------|
-| GPU-tier matching | **Supported (GA)** | ResourceFlavor nodeLabels + ClusterQueue admission |
-| Intra-cluster placement | **Supported (GA)** | Hardware Profile -> LocalQueue -> ClusterQueue -> ResourceFlavor |
-| Tensor parallelism | **Partially Supported** | vLLM `--tensor-parallel-size` works; topology-aware scheduling (TAS) exists in upstream Kueue but is not included in Red Hat Build of Kueue or RHOAI 3.4 |
-| Intelligent request routing | **Supported (GA)** | llm-d EPP with queue-scorer + prefix-cache-scorer |
+| Requirement | Mechanism |
+|-------------|-----------|
+| GPU-tier matching | ResourceFlavor nodeLabels + ClusterQueue admission |
+| Intra-cluster placement | Hardware Profile -> LocalQueue -> ClusterQueue -> ResourceFlavor |
+| Tensor parallelism | vLLM `--tensor-parallel-size` + Kueue placement on correct GPU tier |
+| Intelligent request routing | llm-d EPP with queue-scorer + prefix-cache-scorer |
 
 ## Quick Start
 
@@ -116,7 +116,7 @@ Before applying, update these values to match your cluster:
 
 ```mermaid
 graph TB
-    subgraph cluster["Single OpenShift Cluster"]
+    subgraph cluster["Single OpenShift AI Cluster"]
         subgraph a100pool["A100 Node Pool"]
             A100_1["gpu-a100-01<br/>8x A100-80GB"]
             A100_2["gpu-a100-02<br/>8x A100-80GB"]
