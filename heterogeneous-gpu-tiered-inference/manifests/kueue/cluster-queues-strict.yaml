@@ -1,3 +1,5 @@
+# Set nominalQuota to match the total GPU count for each tier in your cluster.
+# Example: 2 nodes x 8 GPUs = 16. For 2 nodes x 2 GPUs, set to 4.
 ---
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: ClusterQueue
@@ -12,7 +14,7 @@ spec:
     - name: gpu-a100
       resources:
       - name: "nvidia.com/gpu"
-        nominalQuota: 16
+        nominalQuota: 16          # total A100 GPUs across all nodes
         borrowingLimit: 0
   preemption:
     withinClusterQueue: LowerPriority
@@ -33,7 +35,7 @@ spec:
     - name: gpu-h100
       resources:
       - name: "nvidia.com/gpu"
-        nominalQuota: 16
+        nominalQuota: 16          # total H100 GPUs across all nodes
         borrowingLimit: 0
   preemption:
     withinClusterQueue: LowerPriority

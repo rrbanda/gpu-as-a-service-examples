@@ -108,22 +108,38 @@ Before applying, update these values to match your cluster:
 | Model storage (`storage.key`, `storage.path`) | vLLM manifests | Point to your S3/PVC model storage (Secret must exist in the namespace — see Step 5) |
 | Model URIs (`spec.model.uri`) | llm-d manifests | Point to your HuggingFace URI (`hf://org/model`) or local model (`s3://` or `pvc://`) — see Step 7b |
 
+### Example: Adapting for a Smaller Cluster
+
+If your cluster has 2 A100 PCIe nodes with 2 GPUs each and no H100 nodes:
+
+| What to change | Current value | New value | File |
+|---------------|---------------|-----------|------|
+| A100 NFD label | `A100-SXM4-80GB` | `A100-80GB-PCIe` | `common/kueue/resource-flavors.yaml` |
+| A100 quota | `nominalQuota: 16` | `nominalQuota: 4` | `manifests/kueue/cluster-queues-strict.yaml` |
+| H100 resources | present | remove or set `nominalQuota: 0` | `cluster-queues-strict.yaml`, `local-queues.yaml`, `hardware-profiles.yaml` |
+| TP GPU count | `--tensor-parallel-size=4`, `nvidia.com/gpu: "4"` | `--tensor-parallel-size=2`, `nvidia.com/gpu: "2"` | `inferenceservice-70b-h100-tp.yaml` (or move to A100 queue) |
+| 70B model queue | `h100-queue` | `a100-queue` | model manifest `kueue.x-k8s.io/queue-name` label |
+
+The maximum `--tensor-parallel-size` equals the number of GPUs on a single node (TP runs inside one pod on one node).
+
 ---
 
 ## Architecture Overview
 
 ### Cluster Layout
 
+The diagram below shows one example topology. Your cluster may differ — nodes can have 2, 4, or 8 GPUs, and you may have a single GPU tier or many. Adjust `nominalQuota` in ClusterQueues and `--tensor-parallel-size` in model manifests to match your actual hardware.
+
 ```mermaid
 graph TB
     subgraph cluster["Single OpenShift AI Cluster"]
         subgraph a100pool["A100 Node Pool"]
-            A100_1["gpu-a100-01<br/>8x A100-80GB"]
-            A100_2["gpu-a100-02<br/>8x A100-80GB"]
+            A100_1["gpu-a100-01<br/>A100-80GB GPUs"]
+            A100_2["gpu-a100-02<br/>A100-80GB GPUs"]
         end
         subgraph h100pool["H100/H200 Node Pool"]
-            H100_1["gpu-h100-01<br/>8x H100-80GB"]
-            H100_2["gpu-h100-02<br/>8x H100-80GB"]
+            H100_1["gpu-h100-01<br/>H100-80GB GPUs"]
+            H100_2["gpu-h100-02<br/>H100-80GB GPUs"]
         end
     end
 
@@ -219,15 +235,17 @@ flowchart LR
 
 ### Tensor Parallelism: Single Pod, Multiple GPUs
 
+The diagram below shows TP=4 on an SXM node with NVLink interconnect. On PCIe nodes, GPUs communicate over PCIe instead of NVLink, which reduces inter-GPU bandwidth but does not affect correctness — TP still works, just with higher latency for tensor exchanges.
+
 ```mermaid
 flowchart LR
-    subgraph pod["Pod: llama3-70b (H100 node)"]
+    subgraph pod["Pod: llama3-70b (H100 SXM node)"]
         direction LR
         GPU0["GPU 0<br/>Layers 0-19"]
         GPU1["GPU 1<br/>Layers 20-39"]
         GPU2["GPU 2<br/>Layers 40-59"]
         GPU3["GPU 3<br/>Layers 60-79"]
-        GPU0 <-->|"NVLink<br/>900 GB/s"| GPU1
+        GPU0 <-->|"NVLink"| GPU1
         GPU1 <-->|"NVLink"| GPU2
         GPU2 <-->|"NVLink"| GPU3
     end
@@ -241,6 +259,8 @@ flowchart LR
     style GPU3 fill:#4a148c,stroke:#ab47bc,color:#fff
     style vLLM fill:#004d40,stroke:#26a69a,color:#fff
 ```
+
+> **NVLink bandwidth varies by GPU generation:** A100 SXM4 provides 600 GB/s bidirectional, H100 SXM provides 900 GB/s. PCIe variants (A100 PCIe, H100 PCIe) do not have NVLink — inter-GPU communication uses PCIe Gen4/Gen5. TP works on both, but SXM variants deliver higher throughput for multi-GPU models.
 
 **Data flow summary:**
 1. User selects a Hardware Profile in the RHOAI dashboard (or sets `kueue.x-k8s.io/queue-name` in YAML)
@@ -281,7 +301,7 @@ oc get nodes -l nvidia.com/gpu.product -o custom-columns=\
   COUNT:.status.capacity.nvidia\.com/gpu
 ```
 
-Expected output:
+Example output (your values will differ based on GPU SKU and node count):
 ```
 NODE            GPU                        COUNT
 gpu-a100-01     A100-SXM4-80GB             8
@@ -291,6 +311,8 @@ gpu-h100-02     NVIDIA-H100-80GB-HBM3     8
 ```
 
 If GPU labels are missing, NFD is not running or the GPU Operator is not installed.
+
+> **The `nvidia.com/gpu.product` label value is SKU-specific.** Common values include `A100-SXM4-80GB`, `A100-80GB-PCIe`, `NVIDIA-H100-80GB-HBM3`, and `NVIDIA-H200-141GB-HBM3e`. PCIe and SXM variants of the same GPU produce different labels. You **must** use the exact label value from your cluster in the ResourceFlavor manifests — see `common/kueue/resource-flavors.yaml`.
 
 ### Activate Kueue in OpenShift AI
 
@@ -340,7 +362,7 @@ metadata:
   name: gpu-a100
 spec:
   nodeLabels:
-    nvidia.com/gpu.product: A100-SXM4-80GB
+    nvidia.com/gpu.product: A100-SXM4-80GB       # change to match your SKU (e.g., A100-80GB-PCIe)
 ---
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: ResourceFlavor
@@ -358,6 +380,8 @@ spec:
   nodeLabels:
     nvidia.com/gpu.product: NVIDIA-H200-141GB-HBM3e
 ```
+
+> **Critical:** The label values above are examples for the SXM4 variant of the A100. If your cluster has A100 PCIe cards, the label will be `A100-80GB-PCIe` (or similar). Always verify with `oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.nvidia\.com/gpu\.product}{"\n"}{end}'` and update accordingly. Using the wrong label value will cause ResourceFlavors to match zero nodes, and workloads will remain pending indefinitely.
 
 Apply individually:
 
@@ -399,6 +423,8 @@ This guide shows **strict pinning** (separate queues per tier) since the goal is
 
 ### Pattern A: Strict Tier Pinning (Recommended for This Use Case)
 
+> **Set `nominalQuota` to match your actual cluster GPU count.** The values below (16) are examples assuming 2 nodes with 8 GPUs each. For a cluster with 2 nodes x 2 GPUs each, set `nominalQuota: 4`. Run `oc get nodes -l nvidia.com/gpu.product -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.capacity.nvidia\.com/gpu}{"\n"}{end}'` to determine your total GPU count per tier.
+
 ```yaml
 # cluster-queues-strict.yaml
 ---
@@ -415,7 +441,7 @@ spec:
     - name: gpu-a100
       resources:
       - name: "nvidia.com/gpu"
-        nominalQuota: 16           # 16 A100 GPUs reserved for this queue
+        nominalQuota: 16           # set to total A100 GPUs in cluster
         borrowingLimit: 0          # strict: no borrowing from other tiers
   preemption:
     withinClusterQueue: LowerPriority
@@ -436,7 +462,7 @@ spec:
     - name: gpu-h100
       resources:
       - name: "nvidia.com/gpu"
-        nominalQuota: 16           # 16 H100 GPUs reserved
+        nominalQuota: 16           # set to total H100 GPUs in cluster
         borrowingLimit: 0
   preemption:
     withinClusterQueue: LowerPriority
@@ -644,7 +670,7 @@ spec:
     identifier: nvidia.com/gpu
     defaultCount: 4
     minCount: 4
-    maxCount: 8
+    maxCount: 8                          # set to max GPUs per node in this tier
   defaultResources:
     requests:
       cpu: "16"
@@ -654,6 +680,8 @@ spec:
       memory: "256Gi"
   localQueue: h100-queue
 ```
+
+> **Sizing note:** The `maxCount` value in the TP Hardware Profile must not exceed the GPU count on any single node in that tier. If your H100 nodes have 4 GPUs, set `maxCount: 4`. If you have 2-GPU nodes only, TP is limited to `maxCount: 2`.
 
 Apply:
 
@@ -806,6 +834,8 @@ curl -X POST https://<inference_endpoint>/v1/chat/completions \
 ## Step 6 — Deploy a Large Model on H100 with Tensor Parallelism
 
 Deploy a 70B parameter model that requires 4 GPUs with tensor parallelism. The `kueue.x-k8s.io/queue-name` label routes it to the H100 queue. vLLM's `--tensor-parallel-size=4` splits the model across all 4 GPUs.
+
+> **Hardware requirement:** Tensor parallelism runs inside a single pod, so the target node must have **at least as many GPUs as `--tensor-parallel-size`**. For TP=4, each node in the target GPU tier needs at least 4 GPUs. If your nodes have only 2 GPUs, the maximum TP value is 2. Adjust `--tensor-parallel-size`, `nvidia.com/gpu` requests/limits, and `nominalQuota` in the ClusterQueue to match your actual hardware.
 
 ```yaml
 # inferenceservice-70b-h100-tp.yaml
@@ -1218,9 +1248,15 @@ curl -sk -G -H "Authorization: Bearer $TOKEN" \
 
 **What this means:** Tensor parallelism itself works fully — a pod requests 4 GPUs, vLLM splits the model with `--tensor-parallel-size=4`, and Kueue places the pod on the correct GPU tier via ResourceFlavor. The model runs correctly across all 4 GPUs. What TAS would add is topology optimization *within* the node: guaranteeing that the 4 GPUs share the same NVLink/NVSwitch domain for optimal interconnect bandwidth. Without TAS, kube-scheduler picks any 4 available GPUs on the node.
 
-**Practical impact:** On H100 SXM nodes (all 8 GPUs share one NVLink domain), the absence of TAS is a non-issue — any 4 GPUs are already in the same domain. On A100 nodes with mixed PCIe/SXM configurations, some GPU-to-GPU communication could fall back to PCIe instead of NVLink, reducing inter-GPU bandwidth for TP workloads.
+**Practical impact by GPU variant:**
 
-**Mitigation:** Use H100 SXM nodes for TP workloads. If A100 TP is needed, manually pin to nodes with uniform NVLink topology using a dedicated ResourceFlavor with additional node labels.
+| GPU variant | NVLink | TAS impact |
+|------------|--------|------------|
+| H100 SXM (8 GPUs, one NVLink domain) | All GPUs interconnected at 900 GB/s | TAS absence is a **non-issue** — any subset of GPUs is already in the same domain |
+| A100 SXM4 (8 GPUs, two NVSwitch domains of 4) | 600 GB/s within domain, PCIe across domains | TAS absence may cause cross-domain placement, reducing bandwidth |
+| A100 PCIe / H100 PCIe | **No NVLink** — all inter-GPU traffic uses PCIe | TAS is **irrelevant** — all GPUs are already on the same interconnect (PCIe Gen4/Gen5) |
+
+**Mitigation:** For PCIe-only clusters, TP works correctly but with PCIe bandwidth for inter-GPU communication. For SXM clusters, use nodes where all GPUs share one NVLink domain, or create a dedicated ResourceFlavor with additional node labels to pin TP workloads to topology-uniform nodes.
 
 ### WVA Autoscaling
 

@@ -79,7 +79,7 @@ Every use case in this repo requires the following platform components. Individu
 | Red Hat OpenShift AI | **3.4+** | AI/ML platform — model serving, dashboard, HardwareProfiles |
 | Red Hat Build of Kueue (RHBoK) | latest | Workload scheduling, GPU quotas, and fair sharing |
 | NVIDIA GPU Operator | latest | Exposes GPU devices to the Kubernetes scheduler |
-| Node Feature Discovery (NFD) | latest | Auto-labels nodes by GPU product (e.g., `nvidia.com/gpu.product: A100-SXM4-80GB`) |
+| Node Feature Discovery (NFD) | latest | Auto-labels nodes by GPU product (e.g., `nvidia.com/gpu.product: A100-SXM4-80GB` or `A100-80GB-PCIe`) |
 
 ### Verify Your Cluster
 
@@ -110,7 +110,7 @@ resources:
   - ../kueue              # use-case-specific ClusterQueues
 ```
 
-**Customization:** Update `nvidia.com/gpu.product` values in `common/kueue/resource-flavors.yaml` to match the actual NFD labels on your cluster. Run `oc get nodes -o jsonpath='{.items[*].metadata.labels.nvidia\.com/gpu\.product}'` to find your label values.
+**Customization:** The `nvidia.com/gpu.product` label value is **SKU-specific** — PCIe and SXM variants of the same GPU produce different labels (e.g., `A100-SXM4-80GB` vs `A100-80GB-PCIe`). Update the values in `common/kueue/resource-flavors.yaml` to match the actual NFD labels on your cluster. Run `oc get nodes -o jsonpath='{.items[*].metadata.labels.nvidia\.com/gpu\.product}'` to find your label values.
 
 ---
 

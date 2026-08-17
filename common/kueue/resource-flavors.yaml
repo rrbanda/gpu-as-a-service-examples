@@ -1,3 +1,14 @@
+# IMPORTANT: The nvidia.com/gpu.product label value is set by NFD + GPU Operator
+# and varies by GPU SKU. Verify your actual labels before applying:
+#   oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.nvidia\.com/gpu\.product}{"\n"}{end}'
+#
+# Common values:
+#   A100 SXM4 80GB  -> A100-SXM4-80GB
+#   A100 PCIe 80GB  -> A100-80GB-PCIe
+#   A100 SXM4 40GB  -> A100-SXM4-40GB
+#   H100 SXM 80GB   -> NVIDIA-H100-80GB-HBM3
+#   H100 PCIe 80GB  -> NVIDIA-H100-80GB-HBM3
+#   H200 SXM 141GB  -> NVIDIA-H200-141GB-HBM3e
 ---
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: ResourceFlavor
@@ -5,7 +16,7 @@ metadata:
   name: gpu-a100
 spec:
   nodeLabels:
-    nvidia.com/gpu.product: A100-SXM4-80GB
+    nvidia.com/gpu.product: A100-SXM4-80GB       # change to match your SKU
 ---
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: ResourceFlavor

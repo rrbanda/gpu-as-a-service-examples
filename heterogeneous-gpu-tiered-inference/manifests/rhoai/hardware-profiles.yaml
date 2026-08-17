@@ -67,7 +67,7 @@ spec:
     identifier: nvidia.com/gpu
     defaultCount: 4
     minCount: 4
-    maxCount: 8
+    maxCount: 8               # set to max GPUs per node in this tier
   defaultResources:
     requests:
       cpu: "16"
