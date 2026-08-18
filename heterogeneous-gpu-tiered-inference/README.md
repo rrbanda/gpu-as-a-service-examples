@@ -29,7 +29,13 @@ oc create namespace team-b
 oc label namespace team-a kueue.openshift.io/managed=true --overwrite
 oc label namespace team-b kueue.openshift.io/managed=true --overwrite
 
-# 3. Activate Kueue in RHOAI (if not already done)
+# 3. (Optional) Set a default queue so end users don't need to pick a Hardware Profile
+#    With this, any workload deployed into the namespace is automatically routed to the
+#    specified GPU tier — no queue-name label or Hardware Profile selection required.
+oc label namespace team-a kueue.x-k8s.io/default-queue=a100-queue --overwrite
+oc label namespace team-b kueue.x-k8s.io/default-queue=h100-queue --overwrite
+
+# 4. Activate Kueue in RHOAI (if not already done)
 oc patch datasciencecluster default-dsc \
   --type='merge' \
   -p '{"spec":{"components":{"kueue":{"managementState":"Unmanaged"}}}}' \
@@ -40,8 +46,8 @@ oc patch odhdashboardconfig odh-dashboard-config \
   --type merge \
   -p '{"spec":{"dashboardConfig":{"disableKueue":false}}}'
 
-# 4. For vLLM overlay: create S3 data connection secret (see Step 5 for details)
-# 5. For llm-d overlay: configure Gateway API + Authorino (see Step 7a for details)
+# 5. For vLLM overlay: create S3 data connection secret (see Step 5 for details)
+# 6. For llm-d overlay: configure Gateway API + Authorino (see Step 7a for details)
 ```
 
 ### Apply with Kustomize
@@ -592,6 +598,26 @@ team-b      h100-queue    h100-inference   0         0
 ```
 
 > **Note:** Namespace creation and labeling are manual prerequisites that must be done before running `oc apply -k`. The Kustomize overlays create the Kueue and RHOAI resources but do not create or modify namespaces.
+
+### Optional: Default Queue per Namespace (Zero-Touch for End Users)
+
+By default, workloads must specify which GPU tier to use — either by selecting a Hardware Profile in the RHOAI dashboard or by setting the `kueue.x-k8s.io/queue-name` label in YAML. If you want end users to deploy models **without any GPU-tier awareness**, set a default queue on the namespace:
+
+```bash
+oc label namespace team-a kueue.x-k8s.io/default-queue=a100-queue --overwrite
+```
+
+With this label, any workload deployed into `team-a` that does not have an explicit `queue-name` label is automatically assigned to `a100-queue` — which routes it to A100 GPUs via the ClusterQueue and ResourceFlavor. The end user just deploys a model. No Hardware Profile selection, no queue label in YAML.
+
+**When to use this pattern:**
+
+| Scenario | Approach |
+|----------|----------|
+| Platform team controls GPU assignment, end users should not choose | Set `default-queue` on each namespace — one namespace per GPU tier |
+| End users need self-service GPU tier selection | Use Hardware Profiles (Step 4) — users pick the tier in the dashboard |
+| Mix of both | Set a `default-queue` for the common case; users can still override by explicitly setting `queue-name` on individual workloads |
+
+If a workload has an explicit `kueue.x-k8s.io/queue-name` label, it always takes precedence over the namespace default.
 
 ---
 
