@@ -355,7 +355,7 @@ Key derived metrics:
 
 ## Phase 2: Inference-Aware Routing with llm-d
 
-Phase 1 validates GPU admission, quota, and preemption using Kueue alone. Phase 2 adds the llm-d inference gateway in front of the serving Deployment and re-runs Scenario 4 to validate zero-downtime inference during GPU reallocation.
+Phase 1 validates GPU admission, quota, and preemption using Kueue alone. Phase 2 deploys the model using LLMInferenceService (which creates the llm-d inference gateway, EPP, and InferencePool automatically) and re-runs Scenario 4 to validate improved inference availability during GPU reallocation.
 
 ### Why llm-d
 
@@ -364,50 +364,61 @@ Kueue decides **which pods get GPUs**. llm-d decides **which pod gets each reque
 | Concern | Without llm-d | With llm-d (EPP) |
 |---------|--------------|-------------------|
 | **Request routing during pod termination** | Random (probabilistic) via kube-proxy iptables rules; requests can hit a terminating pod until EndpointSlice propagation completes | EPP watches pod readiness directly (shorter propagation path than the EndpointSlice → kube-proxy chain) and deprioritizes endpoints by queue-depth scoring, reducing the window during which requests reach a draining pod |
-| **Requests arriving when no replica is Ready** | 503 — nothing to queue them | With Flow Control enabled (off by default), EPP buffers requests in-memory up to a configurable TTL (default 60s). If queue fills or TTL expires before a replica is Ready, the request is rejected with 503. Queues are in-memory only and lost on EPP restart |
+| **Requests arriving when no replica is Ready** | 503 — nothing to queue them | With Flow Control enabled, EPP buffers requests in-memory up to a configurable TTL (default 60s). If queue fills or TTL expires before a replica is Ready, the request is rejected with 503. Queues are in-memory only and lost on EPP restart |
 | **Multi-replica load balancing** | Random (probabilistic) | KV cache affinity + queue depth aware — composite scoring routes to the replica most likely to serve fast |
 | **Model-aware routing** | None | LoRA-affinity scoring (routes to pods with the requested adapter loaded) + prefix-cache-aware scheduling (routes to pods with relevant KV cache entries for the prompt, reducing time-to-first-token) |
 
 
-### llm-d Setup
+### llm-d Setup via LLMInferenceService
 
-llm-d requires Gateway API and an InferencePool resource pointing at the serving pods.
+In RHOAI 3.5, LLMInferenceService creates the InferencePool, HTTPRoute, and EPP automatically. The scheduler configuration is inline under `spec.router.scheduler`.
 
 ```yaml
-apiVersion: inference.networking.k8s.io/v1
-kind: InferencePool
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
 metadata:
-  name: vllm-pool
+  name: vllm-serving
+  namespace: team-a
 spec:
-  targetPortNumber: 8000
-  selector:
-    matchLabels:
-      app: vllm-serving
-  endpointPickerConfig:
-    extensionRef:
-      name: llm-d-epp
-    failureMode: failOpen
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: inference-route
-spec:
-  parentRefs:
-  - name: inference-gateway
-  rules:
-  - backendRefs:
-    - group: inference.networking.k8s.io
-      kind: InferencePool
-      name: vllm-pool
+  replicas: 2
+  model:
+    uri: hf://meta-llama/Llama-3.1-8B-Instruct
+    name: meta-llama/Llama-3.1-8B-Instruct
+  router:
+    gateway:
+      name: openshift-ai-inference
+      namespace: openshift-ingress
+    scheduler:
+      config:
+        inline:
+          apiVersion: llm-d.ai/v1alpha1
+          kind: EndpointPickerConfig
+          plugins:
+            - type: prefix-cache-scorer
+            - type: queue-scorer
+          schedulingProfiles:
+          - name: default
+            plugins:
+            - pluginRef: queue-scorer
+              weight: 2
+            - pluginRef: prefix-cache-scorer
+              weight: 3
+    template:
+      containers:
+      - name: main
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+          requests:
+            nvidia.com/gpu: "1"
 ```
 
-To enable Flow Control (request queuing), set the `flowControl` feature gate in the EPP EndpointPickerConfig. Without it, EPP routes requests but does not queue them when the pool is saturated.
+This deploys vLLM model servers behind the llm-d EPP with queue-depth-aware and prefix-cache-aware routing enabled by default. Flow Control is not enabled yet — that is added in Phase 3.
 
 
 ### Scenario 9: Inference Continuity During Preemption — With llm-d
 
-**Prerequisite:** Phase 1 Scenario 3 complete. Team A running 2 inference replicas behind the llm-d gateway. Continuous load generator running against the gateway endpoint.
+**Prerequisite:** Phase 1 Scenario 3 complete (Kueue quota and preemption validated). Team A's model deployed via LLMInferenceService with 2 replicas behind the llm-d gateway. Continuous load generator running against the gateway endpoint.
 
 **Steps:**
 1. Team A scales inference from 2 to 1 replica (simulating Kueue preemption of one replica)
@@ -421,15 +432,15 @@ To enable Flow Control (request queuing), set the `flowControl` feature gate in 
 - [ ] After the replacement pod is Ready, EPP routes requests to both replicas again (verify via metrics or logs)
 - [ ] Compare error rate to Phase 1 Scenario 4 (without llm-d): record any difference
 
-**What this validates:** llm-d's inference-aware routing eliminates request failures during GPU reallocation that would occur with basic kube-proxy Service routing.
+**What this validates:** llm-d's inference-aware routing reduces or eliminates request failures during GPU reallocation compared to basic kube-proxy Service routing.
 
 
-### Scenario 10: Request Queuing During Single-Replica Preemption — With llm-d Flow Control
+### Scenario 10: Request Buffering During Single-Replica Rolling Update
 
-**Prerequisite:** Flow Control feature gate enabled on EPP. Team A running 1 inference replica behind llm-d gateway. Continuous load generator running.
+**Prerequisite:** Flow Control feature gate enabled on EPP (add `featureGates: ["flowControl"]` to the inline EndpointPickerConfig). Team A running 1 inference replica behind llm-d gateway. Continuous load generator running.
 
 **Steps:**
-1. Trigger a rolling update: `oc rollout restart deployment/vllm-serving`
+1. Trigger a rolling update on the underlying model server pods
 2. With maxSurge: 0, maxUnavailable: 1 — the single replica terminates before the replacement is Ready
 3. During the gap (old pod Terminating, new pod loading model), observe request behavior
 
@@ -437,10 +448,10 @@ To enable Flow Control (request queuing), set the `flowControl` feature gate in 
 - [ ] EPP Flow Control buffers requests while zero replicas are Ready (verify via `llm_d_epp_flow_control_queue_size` metric > 0)
 - [ ] Requests that arrive during the gap are held, not rejected — provided the model loads within the TTL (default 60s)
 - [ ] After the replacement pod is Ready, queued requests are dispatched and complete successfully
-- [ ] If model load exceeds TTL: requests in queue are rejected with 503 — record how many
+- [ ] If model load exceeds TTL: requests in queue are rejected with 503 (`rejected-ttl-expired`) — record how many
 - [ ] Record the maximum queue depth observed during the gap
 
-**What this validates:** EPP Flow Control acts as a buffer during the zero-replica window that Kueue's rolling update strategy creates. This is the key capability that kube-proxy cannot provide. Note: model load time is the limiting factor — if the model takes longer than the queue TTL, requests will still be rejected.
+**What this validates:** EPP Flow Control acts as a buffer during the zero-replica window. This is the key capability that kube-proxy cannot provide. Model load time is the limiting factor — if the model takes longer than the queue TTL, requests will still be rejected.
 
 
 ### Phase 2 Success Criteria
@@ -448,15 +459,275 @@ To enable Flow Control (request queuing), set the `flowControl` feature gate in 
 | # | Scenario | Key Metric |
 |---|----------|------------|
 | 9 | Inference continuity with llm-d (2 replicas) | Zero 503 errors vs. Phase 1 Scenario 4 error count |
-| 10 | Request queuing with Flow Control (1 replica, rolling update) | Requests buffered and served after model load; record max queue depth and any TTL rejections |
+| 10 | Request buffering with Flow Control (1 replica, rolling update) | Requests buffered and served after model load; record max queue depth and any TTL rejections |
 
 
 ### Phase 2 Design Considerations
 
-- **Flow Control is off by default.** It must be explicitly enabled via the `flowControl` feature gate in the EPP configuration. Without it, Scenarios 9 and 10 behave like Phase 1 (no queuing).
-- **Queue TTL vs. model load time.** The default TTL is 60s. For Llama-3.1-8B on A100, model load is typically 30–45s (within TTL). For larger models (70B+), model load can exceed 60s — increase TTL or accept that some requests will be rejected during the gap.
-- **In-memory queues.** EPP queues are stored in memory. If the EPP pod restarts during the queuing window, all buffered requests are lost. Plan EPP availability accordingly.
+- **Flow Control requires explicit enablement.** Add `featureGates: ["flowControl"]` in the inline EndpointPickerConfig. Without it, Scenario 10 has no queuing — requests get 503 immediately when no endpoints exist.
+- **Queue TTL vs. model load time.** The default TTL is 60s. For Llama-3.1-8B on A100, model load is typically 30–45s (within TTL). For larger models (70B+), model load can exceed 60s — increase `defaultRequestTTL` or accept that some requests will be rejected during the gap.
+- **In-memory queues.** EPP queues are stored in memory. If the EPP pod restarts during the buffering window, all queued requests are lost.
 - **EPP endpoint detection timing.** EPP watches pod readiness via the Kubernetes API (same underlying mechanism as kube-proxy). The propagation path is shorter (direct pod watch vs. EndpointSlice → kube-proxy chain), but the improvement is seconds, not milliseconds. Do not claim sub-second endpoint removal.
+- **Fail-open behavior.** If the EPP becomes unavailable, the gateway routes requests directly to model servers without Flow Control protection. Priority ordering, fairness, and saturation gating are not enforced during this window.
+
+
+---
+
+## Phase 3: Request Prioritization for Mixed Interactive and Batch Inference
+
+Phase 1 solves GPU allocation (who gets the cards). Phase 2 solves routing quality (which pod handles each request). Phase 3 solves a different problem: **when interactive users and batch inference pipelines share the same model servers, how do you protect interactive latency without wasting GPU capacity?**
+
+### The Problem
+
+At scale, organizations run both interactive and batch inference against the same LLM:
+
+| Workload | Example | SLO | Volume |
+|----------|---------|-----|--------|
+| Interactive | Chat, RAG, code completion | P99 TTFT < 500ms | Bursty, user-driven |
+| Batch | Document summarization, embedding generation, offline evaluation, synthetic data | Completed within hours | High volume, sustained |
+
+Without request-level prioritization, a batch pipeline flooding the model server queue degrades interactive latency for all users. The typical workaround — separate GPU pools for batch and interactive — doubles infrastructure cost.
+
+Flow Control in RHOAI 3.5 (GA) solves this by consolidating both workload types on the same GPU pool with priority-based queuing. Interactive requests dispatch first. Batch requests fill idle capacity and are shed first under saturation.
+
+
+### How Flow Control Works
+
+```
+   Interactive ──► ┌─────────────────────────────┐
+   (priority 100)  │  EPP Flow Control            │
+                   │  ┌─────────┐  ┌───────────┐  │     ┌────────────┐
+                   │  │ P=100   │──│ Saturation│──│────►│ vLLM Pool  │
+                   │  │ queue   │  │ Detector  │  │     │ (shared)   │
+                   │  ├─────────┤  │           │  │     └────────────┘
+   Batch ─────────►│  │ P=-1   │──│           │  │
+   (priority -1)   │  │ queue   │  └───────────┘  │
+                   │  └─────────┘                  │
+                   └─────────────────────────────┘
+```
+
+1. Gateway injects `x-gateway-inference-objective` header based on client authentication (ServiceAccount namespace)
+2. EPP matches the header to an InferenceObjective resource to determine priority
+3. Requests enter priority-specific queues
+4. Dispatch is strict priority: P=100 always before P=-1
+5. Saturation detector monitors `vllm:num_requests_waiting` and `vllm:kv_cache_usage_perc` — when pool is saturated, dispatch halts and requests queue
+6. Work-conserving: when the pool has capacity, all requests dispatch immediately with zero added latency
+
+
+### Flow Control Configuration
+
+Enable Flow Control and configure saturation detection in the LLMInferenceService:
+
+```yaml
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: vllm-serving
+  namespace: team-a
+spec:
+  replicas: 2
+  model:
+    uri: hf://meta-llama/Llama-3.1-8B-Instruct
+    name: meta-llama/Llama-3.1-8B-Instruct
+  router:
+    gateway:
+      name: openshift-ai-inference
+      namespace: openshift-ingress
+    scheduler:
+      config:
+        inline:
+          apiVersion: llm-d.ai/v1alpha1
+          kind: EndpointPickerConfig
+          featureGates:
+            - "flowControl"
+          flowControl:
+            defaultRequestTTL: 1m
+            saturationDetector:
+              pluginRef: utilization-detector
+            priorityBands:
+            - priority: 100
+              orderingPolicyRef: fcfs-ordering-policy
+              fairnessPolicyRef: round-robin-fairness-policy
+            - priority: 0
+              orderingPolicyRef: fcfs-ordering-policy
+              fairnessPolicyRef: round-robin-fairness-policy
+            - priority: -1
+              maxRequests: 1000
+              orderingPolicyRef: fcfs-ordering-policy
+              fairnessPolicyRef: global-strict-fairness-policy
+          plugins:
+            - name: utilization-detector
+              type: utilization-detector
+              parameters:
+                queueDepthThreshold: 5
+                kvCacheUtilThreshold: 0.8
+                metricsStalenessThreshold: 200ms
+            - type: prefix-cache-scorer
+            - type: queue-scorer
+          schedulingProfiles:
+          - name: default
+            plugins:
+            - pluginRef: queue-scorer
+              weight: 2
+            - pluginRef: prefix-cache-scorer
+              weight: 3
+```
+
+### InferenceObjective Resources
+
+Create InferenceObjective resources to map client identity to priority tiers. The Gateway AuthPolicy sets the `x-gateway-inference-objective` header to the ServiceAccount's namespace. InferenceObjective names must match these header values.
+
+```yaml
+apiVersion: llm-d.ai/v1alpha2
+kind: InferenceObjective
+metadata:
+  name: app-interactive
+  namespace: team-a
+spec:
+  priority: 100
+  poolRef:
+    group: llm-d.ai
+    kind: InferencePool
+    name: vllm-serving-inference-pool
+---
+apiVersion: llm-d.ai/v1alpha2
+kind: InferenceObjective
+metadata:
+  name: batch-pipeline
+  namespace: team-a
+spec:
+  priority: -1
+  poolRef:
+    group: llm-d.ai
+    kind: InferencePool
+    name: vllm-serving-inference-pool
+```
+
+### Scenario 11: Baseline — Interactive Latency Without Batch Load
+
+**Setup:** LLMInferenceService deployed with Flow Control enabled. 2 replicas running. No batch traffic.
+
+**Steps:**
+1. Send 10 concurrent interactive chat requests via the gateway
+2. Record P50, P95, P99 time-to-first-token (TTFT) and time-per-output-token (TPOT)
+
+**Acceptance Criteria:**
+- [ ] All requests complete successfully
+- [ ] Record baseline P99 TTFT: ____ms
+- [ ] Record baseline P99 TPOT: ____ms
+- [ ] `llm_d_epp_flow_control_queue_size` remains at 0 (no queuing — pool not saturated)
+
+**What this validates:** Baseline latency numbers. Flow Control adds zero overhead when the pool is not saturated (work-conserving property).
+
+
+### Scenario 12: Batch Flooding Without Flow Control — Latency Degradation
+
+**Setup:** Disable Flow Control (remove `featureGates: ["flowControl"]`). 2 replicas running.
+
+**Steps:**
+1. Start batch pipeline: submit 1000 summarization requests using a ServiceAccount from the `batch-pipeline` namespace
+2. Simultaneously send 10 concurrent interactive chat requests (same as Scenario 11)
+3. Record interactive P50, P95, P99 TTFT and TPOT
+
+**Acceptance Criteria:**
+- [ ] Interactive P99 TTFT degrades significantly compared to Scenario 11 baseline
+- [ ] Record degraded P99 TTFT: ____ms (expected: 2-5x baseline)
+- [ ] Batch and interactive requests are treated identically — no priority differentiation
+- [ ] `vllm:num_requests_waiting` shows high queue depth on model servers
+
+**What this validates:** Without Flow Control, batch traffic directly competes with interactive traffic. This is the problem being solved.
+
+
+### Scenario 13: Batch + Interactive with Flow Control — Latency Protected
+
+**Setup:** Re-enable Flow Control. Apply InferenceObjective resources (priority 100 for interactive, -1 for batch). 2 replicas running.
+
+**Steps:**
+1. Start the same batch pipeline (1000 summarization requests, ServiceAccount from `batch-pipeline` namespace)
+2. Simultaneously send 10 concurrent interactive chat requests (ServiceAccount from `app-interactive` namespace)
+3. Record interactive P50, P95, P99 TTFT and TPOT
+
+**Acceptance Criteria:**
+- [ ] Interactive P99 TTFT is within acceptable range of Scenario 11 baseline (expected: < 1.5x)
+- [ ] Record protected P99 TTFT: ____ms
+- [ ] Batch requests are dispatched when capacity is available (verify via `llm_d_epp_flow_control_requests_total` with priority=-1 label showing dispatched count > 0)
+- [ ] `llm_d_epp_flow_control_queue_size` shows batch requests queuing while interactive dispatches immediately
+- [ ] Compare: Scenario 13 interactive TTFT vs. Scenario 12 interactive TTFT — quantify the improvement
+
+**What this validates:** Flow Control protects interactive latency while batch makes progress on idle capacity. Same GPU pool, no separate infrastructure.
+
+
+### Scenario 14: Saturation Behavior — Load Shedding Under Pressure
+
+**Setup:** Flow Control enabled with priority bands. 2 replicas running.
+
+**Steps:**
+1. Increase batch volume until pool saturates: submit 5000 requests in rapid succession
+2. Simultaneously send interactive requests
+3. Observe Flow Control metrics
+
+**Acceptance Criteria:**
+- [ ] `llm_d_epp_flow_control_pool_saturation` reaches 1.0
+- [ ] Interactive requests (priority 100) continue dispatching even under saturation
+- [ ] Batch requests (priority -1) queue and begin receiving rejection: HTTP 429 (`rejected-saturated`) when band capacity (`maxRequests: 1000`) is exceeded, or HTTP 503 (`rejected-ttl-expired`) after 60s
+- [ ] Check `x-llm-d-request-dropped-reason` response header on rejected requests — verify it matches documented values
+- [ ] Interactive requests are never rejected unless the pool is completely overwhelmed
+
+**What this validates:** Graceful degradation under extreme load. Batch traffic is shed first. Interactive traffic is protected. The platform does not crash — it rejects excess batch work with documented HTTP status codes and reason headers.
+
+
+### Scenario 15: Starvation Protection — Batch Gets Served
+
+**Setup:** Flow Control enabled. Configure `priority-holdback-policy` with `minCeiling: 0.3`. 2 replicas running.
+
+**Steps:**
+1. Send sustained interactive load for 5 minutes (enough to keep the pool above 30% saturation but below 100%)
+2. Simultaneously submit batch requests
+3. Monitor batch dispatch rate
+
+**Acceptance Criteria:**
+- [ ] Batch requests are dispatched when pool saturation is below the holdback ceiling for priority -1 (0.3 with linear interpolation)
+- [ ] `llm_d_epp_flow_control_requests_total{priority="-1", outcome="dispatched"}` is greater than 0
+- [ ] Batch is not permanently starved — it makes progress when capacity is available
+- [ ] Interactive latency remains within acceptable range
+
+**What this validates:** Starvation protection. Under sustained high-priority load, lower-priority traffic is not permanently blocked. The holdback policy gates batch at lower saturation thresholds, ensuring fair use of idle capacity.
+
+
+### Phase 3 Success Criteria
+
+| # | Scenario | Key Metric |
+|---|----------|------------|
+| 11 | Interactive baseline | Record P99 TTFT and TPOT without batch |
+| 12 | Batch flooding (no Flow Control) | Interactive P99 TTFT degrades 2-5x |
+| 13 | Batch + Interactive (with Flow Control) | Interactive P99 TTFT within 1.5x of baseline |
+| 14 | Saturation and load shedding | Batch rejected with 429/503, interactive protected |
+| 15 | Starvation protection | Batch dispatched > 0 under sustained interactive load |
+
+
+### Phase 3 Design Considerations
+
+- **Flow Control is GA in RHOAI 3.5.** Not dev preview, not tech preview. Fully supported.
+- **API group is `llm-d.ai`.** InferenceObjective uses `apiVersion: llm-d.ai/v1alpha2`. EndpointPickerConfig uses `apiVersion: llm-d.ai/v1alpha1`. The older `inference.networking.x-k8s.io` group is deprecated.
+- **Authentication is required.** Flow Control maps client identity to priority via the `x-gateway-inference-objective` header, which is set by the Gateway AuthPolicy based on ServiceAccount tokens. Enable authentication and authorization for the LLMInferenceService before configuring Flow Control.
+- **Work-conserving.** When the pool has capacity, all requests (including batch) dispatch immediately with zero added latency. Priority queuing activates only under saturation.
+- **Fail-open.** If EPP becomes unavailable, the gateway routes requests directly to model servers without priority ordering, fairness, or saturation gating.
+- **Saturation formula.** Pool saturation = average across pods of `Max(num_requests_waiting / queueDepthThreshold, kv_cache_usage_perc / kvCacheUtilThreshold)`. Tuning `queueDepthThreshold` (default 5) and `kvCacheUtilThreshold` (default 0.8) controls when queuing activates.
+- **Batch inference gateway.** RHOAI 3.5 also ships a dedicated batch inference gateway (Chapter 8 of the llm-d docs) with AIMD adaptive concurrency control and system-prompt hash sorting for prefix cache reuse. This is an alternative to raw batch scripts for submitting offline inference work.
+- **Metrics prefix.** All flow control metrics use the `llm_d_epp_flow_control_` prefix. Key metrics: `queue_size`, `pool_saturation`, `request_queue_duration_seconds`, `requests_total` (with outcome and priority labels).
+
+
+---
+
+## How the Three Phases Fit Together
+
+| Phase | Problem | Solution | What Gets Validated |
+|-------|---------|----------|-------------------|
+| **Phase 1** (Scenarios 1–8) | Who gets the GPU cards? | Kueue — priority preemption, elastic borrowing, quota reclaim | GPU allocation, fleet utilization, serving protection |
+| **Phase 2** (Scenarios 9–10) | Which pod handles each request? | llm-d EPP — queue-depth routing, prefix-cache routing, request buffering | Inference availability during pod transitions |
+| **Phase 3** (Scenarios 11–15) | Who gets served first on the same model server? | llm-d Flow Control — priority queuing, saturation detection, load shedding | Interactive latency protection, batch consolidation, infrastructure cost reduction |
+
+Each phase is independently valuable. Phase 1 is the foundation. Phase 2 adds routing quality. Phase 3 adds request-level SLO enforcement for mixed inference workloads.
 
 
 ## Platform References
@@ -465,9 +736,8 @@ To enable Flow Control (request queuing), set the `flowControl` feature gate in 
 - Kueue preemption: https://kueue.sigs.k8s.io/docs/concepts/preemption/
 - WorkloadPriorityClass: https://kueue.sigs.k8s.io/docs/concepts/workload_priority_class/
 - RHOAI 3.5 Kueue management: https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/managing_openshift_ai/managing-workloads-with-kueue
-- GKE mixed training + inference with Kueue: https://docs.cloud.google.com/kubernetes-engine/docs/tutorials/mixed-workloads
+- RHOAI 3.5 llm-d Flow Control: https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/deploy_models_using_distributed_inference_with_llm-d/managing-mixed-workloads-with-priority-queuing
+- RHOAI 3.5 llm-d Scheduler Configuration: https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/deploy_models_using_distributed_inference_with_llm-d/configuring-llm-scheduler
+- RHOAI 3.5 Batch Inference with llm-d: https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/deploy_models_using_distributed_inference_with_llm-d/batch-inference-with-llmd_flow-control
+- RHOAI 3.5 LLMInferenceService Deployment: https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/deploy_models_using_distributed_inference_with_llm-d/deploying-models-using-distributed-inference_distributed-inference
 - KServe graceful drain pattern: https://github.com/kserve/kserve/pull/5496
-- llm-d Flow Control: https://github.com/llm-d/llm-d/blob/main/docs/architecture/core/router/epp/flow-control.md
-- llm-d Graceful Shutdown: https://llm-d.ai/docs/dev/operations/graceful-shutdown
-- llm-d Scheduling Architecture: https://github.com/llm-d/llm-d/blob/main/docs/architecture/core/router/epp/scheduling.md
-- llm-d EPP Configuration: https://llm-d.ai/docs/architecture/core/router/epp/configuration
