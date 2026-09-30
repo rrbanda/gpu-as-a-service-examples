@@ -366,12 +366,12 @@ Kueue decides **which pods get GPUs**. llm-d decides **which pod gets each reque
 | **Request routing during pod termination** | Random (probabilistic) via kube-proxy iptables rules; requests can hit a terminating pod until EndpointSlice propagation completes | EPP watches pod readiness directly (shorter propagation path than the EndpointSlice → kube-proxy chain) and deprioritizes endpoints by queue-depth scoring, reducing the window during which requests reach a draining pod |
 | **Requests arriving when no replica is Ready** | 503 — nothing to queue them | With Flow Control enabled, EPP buffers requests in-memory up to a configurable TTL (default 60s). If queue fills or TTL expires before a replica is Ready, the request is rejected with 503. Queues are in-memory only and lost on EPP restart |
 | **Multi-replica load balancing** | Random (probabilistic) | KV cache affinity + queue depth aware — composite scoring routes to the replica most likely to serve fast |
-| **Model-aware routing** | None | LoRA-affinity scoring (routes to pods with the requested adapter loaded) + prefix-cache-aware scheduling (routes to pods with relevant KV cache entries for the prompt, reducing time-to-first-token) |
+| **Prefix-cache-aware routing** | None | Prefix-cache scoring routes requests with similar prompt prefixes to the same replica, converting redundant prefill into cache lookups and reducing time-to-first-token. This is the default behavior in RHOAI 3.5 (included in the 4-scorer default configuration). |
 
 
 ### llm-d Setup via LLMInferenceService
 
-In RHOAI 3.5, LLMInferenceService creates the InferencePool, HTTPRoute, and EPP automatically. The scheduler configuration is inline under `spec.router.scheduler`.
+In RHOAI 3.5, LLMInferenceService creates the InferencePool, HTTPRoute, and EPP automatically. Leave `route`, `gateway`, and `scheduler` as empty `{}` to use auto-created defaults, or provide explicit configuration as needed.
 
 ```yaml
 apiVersion: serving.kserve.io/v1alpha1
@@ -385,35 +385,30 @@ spec:
     uri: hf://meta-llama/Llama-3.1-8B-Instruct
     name: meta-llama/Llama-3.1-8B-Instruct
   router:
-    gateway:
-      name: openshift-ai-inference
-      namespace: openshift-ingress
-    scheduler:
-      config:
-        inline:
-          apiVersion: llm-d.ai/v1alpha1
-          kind: EndpointPickerConfig
-          plugins:
-            - type: prefix-cache-scorer
-            - type: queue-scorer
-          schedulingProfiles:
-          - name: default
-            plugins:
-            - pluginRef: queue-scorer
-              weight: 2
-            - pluginRef: prefix-cache-scorer
-              weight: 3
+    route: {}
+    gateway: {}
+    scheduler: {}
     template:
       containers:
       - name: main
         resources:
           limits:
+            cpu: "4"
+            memory: 32Gi
             nvidia.com/gpu: "1"
           requests:
+            cpu: "2"
+            memory: 16Gi
             nvidia.com/gpu: "1"
 ```
 
-This deploys vLLM model servers behind the llm-d EPP with queue-depth-aware and prefix-cache-aware routing enabled by default. Flow Control is not enabled yet — that is added in Phase 3.
+With `scheduler: {}`, RHOAI 3.5 applies the default 4-scorer configuration automatically:
+- `queue-scorer` (weight 2) — distributes load by queue depth
+- `kv-cache-utilization-scorer` (weight 2) — routes to replicas with available KV cache capacity
+- `prefix-cache-scorer` (weight 3) — routes similar prompts to the same replica for cache reuse
+- `no-hit-lru-scorer` (weight 2) — LRU tiebreaker when no cache hit is found
+
+Flow Control is not enabled in this configuration — that is added in Phase 3.
 
 
 ### Scenario 9: Inference Continuity During Preemption — With llm-d
@@ -516,7 +511,7 @@ Flow Control in RHOAI 3.5 (GA) solves this by consolidating both workload types 
 
 ### Flow Control Configuration
 
-Enable Flow Control and configure saturation detection in the LLMInferenceService:
+Enable Flow Control and configure saturation detection in the LLMInferenceService. This adds the `flowControl` feature gate and saturation detector to the inline scheduler config while retaining the default scoring plugins:
 
 ```yaml
 apiVersion: serving.kserve.io/v1alpha1
@@ -530,9 +525,8 @@ spec:
     uri: hf://meta-llama/Llama-3.1-8B-Instruct
     name: meta-llama/Llama-3.1-8B-Instruct
   router:
-    gateway:
-      name: openshift-ai-inference
-      namespace: openshift-ingress
+    route: {}
+    gateway: {}
     scheduler:
       config:
         inline:
@@ -562,27 +556,55 @@ spec:
                 queueDepthThreshold: 5
                 kvCacheUtilThreshold: 0.8
                 metricsStalenessThreshold: 200ms
-            - type: prefix-cache-scorer
             - type: queue-scorer
+            - type: kv-cache-utilization-scorer
+            - type: prefix-cache-scorer
+            - type: no-hit-lru-scorer
           schedulingProfiles:
           - name: default
             plugins:
             - pluginRef: queue-scorer
               weight: 2
+            - pluginRef: kv-cache-utilization-scorer
+              weight: 2
             - pluginRef: prefix-cache-scorer
               weight: 3
+            - pluginRef: no-hit-lru-scorer
+              weight: 2
+    template:
+      containers:
+      - name: main
+        resources:
+          limits:
+            cpu: "4"
+            memory: 32Gi
+            nvidia.com/gpu: "1"
+          requests:
+            cpu: "2"
+            memory: 16Gi
+            nvidia.com/gpu: "1"
 ```
 
 ### InferenceObjective Resources
 
-Create InferenceObjective resources to map client identity to priority tiers. The Gateway AuthPolicy sets the `x-gateway-inference-objective` header to the ServiceAccount's namespace. InferenceObjective names must match these header values.
+Create InferenceObjective resources to map client identity to priority tiers. The Gateway AuthPolicy automatically sets the `x-gateway-inference-objective` header based on authentication:
+
+- **ServiceAccount tokens:** Header is set to the **ServiceAccount's namespace**
+- **User tokens:** Header is set to `authenticated`
+- **Anonymous requests:** Header is set to `unauthenticated`
+
+InferenceObjective names must match these header values. Since ServiceAccount tokens map to their namespace, create InferenceObjective resources named after the namespaces where the client ServiceAccounts live.
+
+In this example:
+- Interactive clients use a ServiceAccount in namespace `app-interactive`
+- Batch pipeline uses a ServiceAccount in namespace `batch-pipeline`
 
 ```yaml
 apiVersion: llm-d.ai/v1alpha2
 kind: InferenceObjective
 metadata:
-  name: app-interactive
-  namespace: team-a
+  name: app-interactive        # matches the namespace of the interactive ServiceAccount
+  namespace: team-a            # namespace where the InferencePool is deployed
 spec:
   priority: 100
   poolRef:
@@ -593,14 +615,28 @@ spec:
 apiVersion: llm-d.ai/v1alpha2
 kind: InferenceObjective
 metadata:
-  name: batch-pipeline
-  namespace: team-a
+  name: batch-pipeline         # matches the namespace of the batch ServiceAccount
+  namespace: team-a            # namespace where the InferencePool is deployed
 spec:
   priority: -1
   poolRef:
     group: llm-d.ai
     kind: InferencePool
     name: vllm-serving-inference-pool
+```
+
+To create the corresponding ServiceAccounts and tokens:
+
+```bash
+# Interactive client (namespace must match InferenceObjective name)
+oc new-project app-interactive
+oc create serviceaccount llm-user -n app-interactive
+TOKEN_INTERACTIVE=$(oc create token llm-user -n app-interactive --duration=1h)
+
+# Batch client (namespace must match InferenceObjective name)
+oc new-project batch-pipeline
+oc create serviceaccount batch-user -n batch-pipeline
+TOKEN_BATCH=$(oc create token batch-user -n batch-pipeline --duration=1h)
 ```
 
 ### Scenario 11: Baseline — Interactive Latency Without Batch Load
@@ -625,8 +661,8 @@ spec:
 **Setup:** Disable Flow Control (remove `featureGates: ["flowControl"]`). 2 replicas running.
 
 **Steps:**
-1. Start batch pipeline: submit 1000 summarization requests using a ServiceAccount from the `batch-pipeline` namespace
-2. Simultaneously send 10 concurrent interactive chat requests (same as Scenario 11)
+1. Start batch pipeline: submit 1000 summarization requests using the `batch-user` ServiceAccount token (from namespace `batch-pipeline`)
+2. Simultaneously send 10 concurrent interactive chat requests using the `llm-user` ServiceAccount token (from namespace `app-interactive`)
 3. Record interactive P50, P95, P99 TTFT and TPOT
 
 **Acceptance Criteria:**
@@ -643,8 +679,8 @@ spec:
 **Setup:** Re-enable Flow Control. Apply InferenceObjective resources (priority 100 for interactive, -1 for batch). 2 replicas running.
 
 **Steps:**
-1. Start the same batch pipeline (1000 summarization requests, ServiceAccount from `batch-pipeline` namespace)
-2. Simultaneously send 10 concurrent interactive chat requests (ServiceAccount from `app-interactive` namespace)
+1. Start the same batch pipeline (1000 summarization requests, `batch-user` token from `batch-pipeline` namespace)
+2. Simultaneously send 10 concurrent interactive chat requests (`llm-user` token from `app-interactive` namespace)
 3. Record interactive P50, P95, P99 TTFT and TPOT
 
 **Acceptance Criteria:**
