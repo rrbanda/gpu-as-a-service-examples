@@ -506,12 +506,12 @@ Flow Control in RHOAI 3.5 (GA) solves this by consolidating both workload types 
                    └─────────────────────────────┘
 ```
 
-1. Gateway injects `x-gateway-inference-objective` header based on client authentication (ServiceAccount namespace)
-2. EPP matches the header to an InferenceObjective resource to determine priority
-3. Requests enter priority-specific queues
-4. Dispatch is strict priority: P=100 always before P=-1
-5. Saturation detector monitors `vllm:num_requests_waiting` and `vllm:kv_cache_usage_perc` — when pool is saturated, dispatch halts and requests queue
-6. Work-conserving: when the pool has capacity, all requests dispatch immediately with zero added latency
+1. Gateway injects `x-gateway-inference-objective` and `x-gateway-fairness-id` headers based on client authentication (ServiceAccount namespace)
+2. EPP resolves the objective header to an InferenceObjective resource, determining the request's priority. The fairness ID identifies the tenant queue within that priority band. Together they form the **flow key** — each unique flow key gets its own queue inside the appropriate band. Requests with no matching InferenceObjective default to priority 0.
+3. Requests enter priority-specific queues based on the flow key
+4. The saturation detector monitors `vllm:num_requests_waiting` and `vllm:kv_cache_usage_perc`. When pool saturation reaches a band's configured dispatch ceiling, requests in that band and all lower-priority bands remain queued. Higher-priority bands continue to dispatch.
+5. Within an eligible band, the fairness policy (round-robin) selects a tenant queue, then the ordering policy (FCFS) selects the next request from it. Only after admission does the scheduler select a backend.
+6. Work-conserving: when the pool is below saturation, all requests (including batch) dispatch immediately with zero added latency — priority queuing activates only under pressure
 
 
 ### Flow Control Configuration
@@ -751,11 +751,16 @@ TOKEN_BATCH=$(oc create token batch-user -n batch-pipeline --duration=1h)
 - **Flow Control is GA in RHOAI 3.5.** Not dev preview, not tech preview. Fully supported.
 - **API group is `llm-d.ai`.** InferenceObjective uses `apiVersion: llm-d.ai/v1alpha2`. EndpointPickerConfig uses `apiVersion: llm-d.ai/v1alpha1`. The older `inference.networking.x-k8s.io` group is deprecated.
 - **Authentication is required.** Flow Control maps client identity to priority via the `x-gateway-inference-objective` header, which is set by the Gateway AuthPolicy based on ServiceAccount tokens. Enable authentication and authorization for the LLMInferenceService before configuring Flow Control.
-- **Work-conserving.** When the pool has capacity, all requests (including batch) dispatch immediately with zero added latency. Priority queuing activates only under saturation.
+- **Default priority is 0.** Requests with no matching InferenceObjective default to priority 0. This is why the EndpointPickerConfig includes a priority 0 band — it catches unauthenticated, anonymous, or unmatched requests.
+- **Flow key = objective + fairness ID.** The objective resolves to a priority, the fairness ID identifies the tenant. Together they form the flow key. Each unique flow key gets its own queue inside the appropriate priority band.
+- **Admission vs. scheduling.** Flow Control separates two decisions: admission (when a request can advance) and scheduling (where the admitted request runs). Admission holds requests in a central policy queue where priority and fairness apply. Only after admission does the scheduler score backends. This separation is what allows priority ordering and tenant fairness before the request enters a backend-local vLLM queue.
+- **Work-conserving.** When the pool is below saturation, all requests (including batch) dispatch immediately with zero added latency. Priority queuing activates only under saturation.
 - **Fail-open.** If EPP becomes unavailable, the gateway routes requests directly to model servers without priority ordering, fairness, or saturation gating.
-- **Saturation formula.** Pool saturation = average across pods of `Max(num_requests_waiting / queueDepthThreshold, kv_cache_usage_perc / kvCacheUtilThreshold)`. Tuning `queueDepthThreshold` (default 5) and `kvCacheUtilThreshold` (default 0.8) controls when queuing activates.
+- **Saturation formula.** Pool saturation = average across pods of `Max(num_requests_waiting / queueDepthThreshold, kv_cache_usage_perc / kvCacheUtilThreshold)`. The utilization detector can reflect backend utilization (queue depth + KV cache) or the EPP's in-flight request budget, depending on configuration. Tuning `queueDepthThreshold` (default 5) and `kvCacheUtilThreshold` (default 0.8) controls when queuing activates.
+- **Per-replica headroom.** Separate from pool-wide saturation, per-replica headroom controls when an individual replica is filtered from routing. This separates backend eligibility from the admission decision.
 - **Batch inference gateway.** RHOAI 3.5 also ships a dedicated batch inference gateway (Chapter 8 of the llm-d docs) with AIMD adaptive concurrency control and system-prompt hash sorting for prefix cache reuse. This is an alternative to raw batch scripts for submitting offline inference work.
 - **Metrics prefix.** All flow control metrics use the `llm_d_epp_flow_control_` prefix. Key metrics: `queue_size`, `pool_saturation`, `request_queue_duration_seconds`, `requests_total` (with outcome and priority labels).
+- **Flight Recorder.** The Flow Control Flight Recorder replays client traffic, EPP queues, and vLLM pressure on the same timeline. Use it during the PoC to see when admission begins holding requests, where requests wait, and whether queues drain after a surge.
 
 
 ---
@@ -781,4 +786,5 @@ Each phase is independently valuable. Phase 1 is the foundation. Phase 2 adds ro
 - RHOAI 3.5 llm-d Scheduler Configuration: https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/deploy_models_using_distributed_inference_with_llm-d/configuring-llm-scheduler
 - RHOAI 3.5 Batch Inference with llm-d: https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/deploy_models_using_distributed_inference_with_llm-d/batch-inference-with-llmd_flow-control
 - RHOAI 3.5 LLMInferenceService Deployment: https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/deploy_models_using_distributed_inference_with_llm-d/deploying-models-using-distributed-inference_distributed-inference
+- llm-d Flow Control blog (Red Hat Developers, August 2026): https://developers.redhat.com/articles/2026/08/27/llm-d-flow-control-priority-queuing-for-shared-gpu-inference
 - KServe graceful drain pattern: https://github.com/kserve/kserve/pull/5496
