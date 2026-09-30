@@ -273,15 +273,15 @@ spec:
 
 ### Scenario 6: Maximum Fleet Utilization — Every GPU Productive
 
-**Prerequisite:** Scenario 5 complete. Team A running 1 inference replica, Team B running 1 training job.
+**Prerequisite:** Scenario 5 complete. Team A running 1 inference replica (1 GPU on own quota), Team B running 1 training job (1 GPU on own quota). 2 GPUs idle (Team A has 1 idle nominal, Team B has 1 idle nominal).
 
 **Steps:**
-1. Team B submits 2 additional training jobs (total: 3 training jobs queued)
+1. Team B submits 3 additional training jobs
 
 **Acceptance Criteria:**
-- [ ] 2 training jobs are admitted (1 from Team B quota, 1 borrowed from Team A's idle quota)
-- [ ] Third training job remains SchedulingGated (no quota available)
-- [ ] All 4 GPUs are in use: 1 inference (Team A) + 1 training (Team B own quota) + 2 training (Team B borrowed)
+- [ ] 2 of the 3 new training jobs are admitted: 1 from Team B's own idle quota, 1 borrowed from Team A's idle quota
+- [ ] Fourth training job (3rd new submission) remains SchedulingGated (no quota available)
+- [ ] All 4 GPUs are in use: 1 inference (Team A own) + 2 training (Team B own quota) + 1 training (Team B borrowed from Team A)
 - [ ] GPU utilization is 100% across the fleet
 
 **What this validates:** Maximum utilization. Every GPU in the fleet is productive. Idle capacity from any team is automatically used by batch workloads. The fleet operates at full capacity without over-provisioning.
@@ -289,19 +289,19 @@ spec:
 
 ### Scenario 7: Quota Reclaim — Team Gets Guaranteed GPUs Back
 
-**Prerequisite:** Scenario 6 complete. All 4 GPUs in use. Team B has borrowed 2 GPUs from Team A and shared pool.
+**Prerequisite:** Scenario 6 complete. All 4 GPUs in use. Team A: 1 GPU (inference, own quota). Team B: 3 GPUs (2 training on own quota + 1 training borrowed from Team A).
 
 **Steps:**
 1. Team A scales inference to 2 replicas: `oc scale deployment/vllm-serving --replicas=2`
 
 **Acceptance Criteria:**
-- [ ] Kueue preempts 1 of Team B's training jobs on borrowed quota
-- [ ] Team A's second inference replica is admitted and starts
+- [ ] Kueue preempts Team B's training job on borrowed quota (the 1 job using Team A's lent capacity)
+- [ ] Team A's second inference replica is admitted and starts on the reclaimed GPU
 - [ ] Time from scale command to preemption to inference Ready: record this value
-- [ ] Team B's training job on its own nominal quota continues running (unaffected)
-- [ ] Team B's remaining borrowed training job continues running (only 1 was preempted — the minimum needed)
+- [ ] Team B's 2 training jobs on their own nominal quota continue running (unaffected)
+- [ ] Final state: Team A using 2 GPUs (own quota), Team B using 2 GPUs (own quota), no borrowing
 
-**What this validates:** Targeted reclaim. Kueue preempts the minimum number of lower-priority borrowed workloads needed to satisfy the reclaim request. Workloads on nominal quota are unaffected.
+**What this validates:** Targeted reclaim. Kueue preempts only the borrowed workload needed to satisfy the reclaim request. Workloads on nominal quota are unaffected. Each team ends up using exactly their guaranteed allocation.
 
 
 ### Scenario 8: Rolling Update — Model Upgrade Under Kueue Management
@@ -330,7 +330,7 @@ spec:
 | 4 | Live traffic continuity | Zero 503 errors during preemption with 2 replicas |
 | 5 | Automatic re-admission | Training resumes in <60s after GPU freed |
 | 6 | Maximum utilization | 4/4 GPUs in use across both teams |
-| 7 | Targeted reclaim | Borrowed batch preempted, nominal workloads unaffected — record time |
+| 7 | Targeted reclaim | Borrowed batch preempted, 2 nominal workloads unaffected — record time |
 | 8 | Rolling update | Completes with no deadlock — record time |
 
 
