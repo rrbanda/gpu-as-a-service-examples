@@ -2,12 +2,12 @@
 
 ## Use Case Summary
 
-On a shared GPU fleet, multiple teams run a mix of long-running inference services and batch training jobs on the same pool of GPUs. The same model servers may also handle both interactive and batch inference requests. The platform must ensure that:
+On a shared multi-tenant GPU cluster, multiple teams run a mix of long-running inference services and batch training or fine-tuning jobs on the same pool of GPUs. The same model servers may also handle both interactive and batch inference requests. The platform must ensure that:
 
-- Inference services receive GPUs with priority over batch training
+- Inference services receive GPUs with priority over batch training and fine-tuning
 - Idle GPU capacity is never stranded — it is automatically utilized by batch workloads
 - When a team needs their GPUs back, capacity is reclaimed without manual intervention
-- Inference requests are routed to the best available replica, avoiding terminating pods and maximizing cache reuse
+- Inference requests are routed to the optimal replica based on queue depth and cache state, avoiding terminating pods and maximizing KV cache and prefix cache reuse
 - Interactive inference latency is protected when batch inference shares the same model servers
 - No manual intervention is required for GPU allocation, request routing, or request prioritization
 
