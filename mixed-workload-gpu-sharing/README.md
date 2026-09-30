@@ -1,4 +1,4 @@
-# PoC Use Case: Mixed Batch and Inference GPU Sharing with Kueue
+# PoC: GPU Sharing and Inference Optimization with Kueue and llm-d
 
 ## Use Case Summary
 
