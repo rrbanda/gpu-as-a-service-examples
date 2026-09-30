@@ -760,7 +760,7 @@ TOKEN_BATCH=$(oc create token batch-user -n batch-pipeline --duration=1h)
 - **Per-replica headroom.** Separate from pool-wide saturation, per-replica headroom controls when an individual replica is filtered from routing. This separates backend eligibility from the admission decision.
 - **Batch inference gateway.** RHOAI 3.5 also ships a dedicated batch inference gateway (Chapter 8 of the llm-d docs) with AIMD adaptive concurrency control and system-prompt hash sorting for prefix cache reuse. This is an alternative to raw batch scripts for submitting offline inference work.
 - **Metrics prefix.** All flow control metrics use the `llm_d_epp_flow_control_` prefix. Key metrics: `queue_size`, `pool_saturation`, `request_queue_duration_seconds`, `requests_total` (with outcome and priority labels).
-- **Flight Recorder.** The Flow Control Flight Recorder replays client traffic, EPP queues, and vLLM pressure on the same timeline. Use it during the PoC to see when admission begins holding requests, where requests wait, and whether queues drain after a surge.
+- **Observability.** Monitor flow control behavior during the PoC using Prometheus metrics from the EPP `/metrics` endpoint. Verify saturation is triggering by checking that `vllm:num_requests_running` is near `--max-num-seqs` and `vllm:num_requests_waiting` > 0 on model servers. Priority differentiation is active whenever there are multiple requests waiting in the queue.
 
 
 ---
