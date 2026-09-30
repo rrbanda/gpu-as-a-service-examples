@@ -2,24 +2,27 @@
 
 ## Use Case Summary
 
-On a shared GPU fleet, multiple teams run a mix of long-running inference services and batch training jobs on the same pool of GPUs. The platform must ensure that:
+On a shared GPU fleet, multiple teams run a mix of long-running inference services and batch training jobs on the same pool of GPUs. The same model servers may also handle both interactive and batch inference requests. The platform must ensure that:
 
 - Inference services receive GPUs with priority over batch training
 - Idle GPU capacity is never stranded — it is automatically utilized by batch workloads
-- When a team needs their GPUs back, capacity is reclaimed within seconds
-- Inference traffic is unaffected during GPU reallocation
-- No manual intervention is required at any point
+- When a team needs their GPUs back, capacity is reclaimed without manual intervention
+- Inference requests are routed to the best available replica, avoiding terminating pods and maximizing cache reuse
+- Interactive inference latency is protected when batch inference shares the same model servers
+- No manual intervention is required for GPU allocation, request routing, or request prioritization
 
 
 ## Business Problem
 
-GPU infrastructure is expensive. In a multi-team environment, two forms of waste occur:
+GPU infrastructure is expensive. In a multi-team environment, three forms of waste occur:
 
 1. **Contention waste:** A batch training job holds GPUs that an inference service needs. The inference service sits Pending until training finishes — which could be hours. Someone must manually identify and stop the training job.
 
 2. **Idle waste:** A team's allocated GPUs sit unused while another team is GPU-starved. There is no mechanism to temporarily share idle capacity and reclaim it when needed.
 
-Kueue addresses both problems through priority-based preemption and elastic quota sharing, managed entirely by platform policy with zero manual intervention.
+3. **Consolidation waste:** Interactive and batch inference workloads are deployed on separate GPU pools because there is no mechanism to prioritize interactive requests over batch. This doubles infrastructure cost while leaving each pool underutilized.
+
+Kueue addresses problems 1 and 2 through priority-based preemption and elastic quota sharing. llm-d addresses problem 3 through inference-aware routing and priority-based Flow Control. Both operate on platform policy with zero manual intervention.
 
 
 ## Environment
