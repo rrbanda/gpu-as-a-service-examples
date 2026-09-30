@@ -1,0 +1,10 @@
+# Engagement-specific docs — local only, never push
+docs/
+draft-reply-*.md
+
+# Temporary files
+.tmp-*
+*.swp
+*.swo
+*~
+.DS_Store

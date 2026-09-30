@@ -6,7 +6,7 @@ One-sentence summary of what this use case demonstrates.
 
 | Requirement | Status | Mechanism |
 |-------------|--------|-----------|
-| *Requirement 1* | **Supported (GA)** / **Partially Supported** / **Gap** | How it works |
+| *Requirement 1* | **Supported** / **Partially Supported** / **Gap** | How it works |
 | *Requirement 2* | ... | ... |
 
 ## Architecture

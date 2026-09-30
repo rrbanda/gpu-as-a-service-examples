@@ -29,11 +29,10 @@ oc create namespace team-b
 oc label namespace team-a kueue.openshift.io/managed=true --overwrite
 oc label namespace team-b kueue.openshift.io/managed=true --overwrite
 
-# 3. (Optional) Set a default queue so end users don't need to pick a Hardware Profile
-#    With this, any workload deployed into the namespace is automatically routed to the
-#    specified GPU tier — no queue-name label or Hardware Profile selection required.
-oc label namespace team-a kueue.x-k8s.io/default-queue=a100-queue --overwrite
-oc label namespace team-b kueue.x-k8s.io/default-queue=h100-queue --overwrite
+# 3. (Optional) Create default LocalQueues so workloads are routed automatically
+#    See "Optional: Default Queue per Namespace" section below for details.
+#    A LocalQueue named "default" in a namespace routes workloads that don't
+#    have an explicit kueue.x-k8s.io/queue-name label.
 
 # 4. Activate Kueue in RHOAI (if not already done)
 oc patch datasciencecluster default-dsc \
@@ -599,23 +598,31 @@ team-b      h100-queue    h100-inference   0         0
 
 > **Note:** Namespace creation and labeling are manual prerequisites that must be done before running `oc apply -k`. The Kustomize overlays create the Kueue and RHOAI resources but do not create or modify namespaces.
 
-### Optional: Default Queue per Namespace (Zero-Touch for End Users)
+### Optional: Default Queue per Namespace
 
-By default, workloads must specify which GPU tier to use — either by selecting a Hardware Profile in the RHOAI dashboard or by setting the `kueue.x-k8s.io/queue-name` label in YAML. If you want end users to deploy models **without any GPU-tier awareness**, set a default queue on the namespace:
+By default, workloads must specify which GPU tier to use — either by selecting a Hardware Profile in the RHOAI dashboard or by setting the `kueue.x-k8s.io/queue-name` label in YAML. If you want workloads to be routed automatically without specifying a queue, create a LocalQueue named `default` in the namespace:
 
-```bash
-oc label namespace team-a kueue.x-k8s.io/default-queue=a100-queue --overwrite
+```yaml
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: default
+  namespace: team-a
+spec:
+  clusterQueue: a100-inference
 ```
 
-With this label, any workload deployed into `team-a` that does not have an explicit `queue-name` label is automatically assigned to `a100-queue` — which routes it to A100 GPUs via the ClusterQueue and ResourceFlavor. The end user just deploys a model. No Hardware Profile selection, no queue label in YAML.
+When a LocalQueue named `default` exists in a namespace, the Kueue `LocalQueueDefaulting` feature automatically assigns the `kueue.x-k8s.io/queue-name: default` label to any workload in that namespace that does not already have a `queue-name` label. This routes the workload to the `a100-inference` ClusterQueue (and its A100 ResourceFlavor) without any user action.
+
+> **Note:** Each namespace can have only one `default` LocalQueue. If a namespace needs access to multiple GPU tiers, create the `default` LocalQueue pointing to the most common tier and use Hardware Profiles or explicit `queue-name` labels for the others.
 
 **When to use this pattern:**
 
 | Scenario | Approach |
 |----------|----------|
-| Platform team controls GPU assignment, end users should not choose | Set `default-queue` on each namespace — one namespace per GPU tier |
+| Platform team controls GPU assignment, end users should not choose | Create a `default` LocalQueue per namespace pointing to the designated GPU tier |
 | End users need self-service GPU tier selection | Use Hardware Profiles (Step 4) — users pick the tier in the dashboard |
-| Mix of both | Set a `default-queue` for the common case; users can still override by explicitly setting `queue-name` on individual workloads |
+| Mix of both | Create a `default` LocalQueue for the common case; users can override by explicitly setting `queue-name` on individual workloads |
 
 If a workload has an explicit `kueue.x-k8s.io/queue-name` label, it always takes precedence over the namespace default.
 
@@ -1270,7 +1277,7 @@ curl -sk -G -H "Authorization: Bearer $TOKEN" \
 
 ### Topology-Aware Scheduling (TAS)
 
-**Status:** TAS is a beta feature in upstream Kueue (kubernetes-sigs/kueue). It is **not included** in any release of Red Hat Build of Kueue (RHBoK) to date, including the latest RHBoK 1.4 (upstream Kueue 0.18). It is not available at any support level — not GA, not Tech Preview, not Dev Preview. The RHBoK operator is independent from RHOAI and can be upgraded separately, but no current RHBoK version ships TAS.
+**Status:** TAS is a beta feature in upstream Kueue (kubernetes-sigs/kueue). It is **not included** in any release of Red Hat Build of Kueue (RHBoK) to date, including RHBoK 1.4 (upstream Kueue 0.18). The RHBoK operator is independent from RHOAI and can be upgraded separately, but no current RHBoK version ships TAS.
 
 **What this means:** Tensor parallelism itself works fully — a pod requests 4 GPUs, vLLM splits the model with `--tensor-parallel-size=4`, and Kueue places the pod on the correct GPU tier via ResourceFlavor. The model runs correctly across all 4 GPUs. What TAS would add is topology optimization *within* the node: guaranteeing that the 4 GPUs share the same NVLink/NVSwitch domain for optimal interconnect bandwidth. Without TAS, kube-scheduler picks any 4 available GPUs on the node.
 
@@ -1286,7 +1293,7 @@ curl -sk -G -H "Authorization: Bearer $TOKEN" \
 
 ### WVA Autoscaling
 
-**Status:** Developer Preview in RHOAI 3.4.
+**Status:** WVA is available in RHOAI 3.4 but is **not fully supported for production workloads**. Verify the current support status in the [RHOAI 3.4 release notes](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.4/html/release_notes/) before deploying.
 
 The Workload Variant Autoscaler (WVA) can automatically scale llm-d model replicas based on KV cache utilization and queue depth instead of generic CPU metrics. It works with the mixed-GPU setup — each `LLMInferenceService` scales its replicas independently within its GPU tier.
 
@@ -1303,17 +1310,17 @@ spec:
         cooldownPeriod: 30
 ```
 
-> **Warning:** WVA is Developer Preview — not supported for production. Use for testing and evaluation only.
+> **Note:** Check the [RHOAI support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.4/html/serving_models/serving-large-models_serving-large-models#about-the-model-serving-platforms_serving-large-models) for the current support level of WVA before using in production.
 
 ### DRA-Based Flavor Selection
 
-**Status:** DRA is GA in OCP 4.21 / Kubernetes 1.34, but RHOAI DRA integration is targeted for 3.6/3.7.
+**Status:** Dynamic Resource Allocation (DRA) is available in OpenShift 4.21 / Kubernetes 1.34. RHOAI integration with DRA is not yet available — check the [RHOAI release notes](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.4/html/release_notes/) for updates.
 
-The ResourceFlavor + nodeLabels approach used in this guide works today and is fully supported. DRA will eventually replace this with attribute-based GPU selection using CEL expressions (e.g., request "any GPU with >40GB memory and Hopper architecture"). For now, ResourceFlavors are the production-ready mechanism.
+The ResourceFlavor + nodeLabels approach used in this guide is the current mechanism for GPU-type-aware scheduling. DRA will eventually enable attribute-based GPU selection using CEL expressions (e.g., request "any GPU with >40GB memory and Hopper architecture"). Until RHOAI integrates DRA, ResourceFlavors are the recommended approach.
 
 ### Flow Control (Priority Queuing in llm-d)
 
-**Status:** Technology Preview in RHOAI 3.4.
+**Status:** Available in RHOAI 3.4. Check the [RHOAI support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.4/html/serving_models/serving-large-models_serving-large-models#about-the-model-serving-platforms_serving-large-models) for the current support level before deploying in production.
 
 If the mixed-GPU cluster serves multiple tenants with different SLA requirements, llm-d's flow control can prioritize latency-sensitive requests over batch workloads on the same model replicas. This uses `InferenceObjective` CRs to define priority tiers.
 
