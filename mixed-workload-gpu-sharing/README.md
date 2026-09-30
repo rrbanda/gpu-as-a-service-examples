@@ -20,9 +20,11 @@ GPU infrastructure is expensive. In a multi-team environment, three forms of was
 
 2. **Idle waste:** A team's allocated GPUs sit unused while another team is GPU-starved. There is no mechanism to temporarily share idle capacity and reclaim it when needed.
 
-3. **Consolidation waste:** Interactive and batch inference workloads are deployed on separate GPU pools because there is no mechanism to prioritize interactive requests over batch. This doubles infrastructure cost while leaving each pool underutilized.
+3. **Routing waste:** When GPUs are reallocated (preemption, rolling updates, scaling), Kubernetes routes requests randomly — including to pods that are terminating or not yet ready. This causes failed requests during transitions. Even during steady state, random routing ignores GPU-side state: a pod that already has the prompt cached in its KV cache can serve the request significantly faster than one that must recompute the prefill from scratch.
 
-Kueue addresses problems 1 and 2 through priority-based preemption and elastic quota sharing. llm-d addresses problem 3 through inference-aware routing and priority-based Flow Control. Both operate on platform policy with zero manual intervention.
+4. **Consolidation waste:** Interactive and batch inference workloads are deployed on separate GPU pools because there is no mechanism to prioritize interactive requests over batch. This doubles infrastructure cost while leaving each pool underutilized.
+
+Kueue addresses problems 1 and 2 through priority-based preemption and elastic quota sharing. llm-d's Endpoint Picker addresses problem 3 through inference-aware routing (queue-depth scoring, prefix-cache affinity). llm-d's Flow Control addresses problem 4 through priority-based request queuing and saturation detection. All three operate on platform policy with zero manual intervention.
 
 
 ## Environment
