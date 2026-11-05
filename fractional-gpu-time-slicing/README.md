@@ -164,6 +164,14 @@ oc exec -n fractional-gpu-demo deploy/vllm-qwen-b -- \
 
 Sanitized live capture: [EVIDENCE.md](EVIDENCE.md) (re-verified 2026-11-05; no cluster URLs or credentials).
 
+## 2× A100 80GB customer sizing
+
+If the target pool is **2× A100 80GB** (including “we have a 70B today” discussions), read **[A100-80GB-POC.md](A100-80GB-POC.md)** before changing the demo:
+
+- **Track A:** time slicing + **small** models (proves packing)
+- **Track B:** one **70B TP=2** on dedicated GPUs (proves hosting; tight KV)
+- **Not viable:** 4× “50% GPU” 70B pods, or two 70B copies via time slicing on those two cards
+
 ## Operating model (who decides sharing)
 
 This section states how time slicing is meant to be operated per RHOAI 3.5 Chapter 8 and the NVIDIA GPU Operator model.
