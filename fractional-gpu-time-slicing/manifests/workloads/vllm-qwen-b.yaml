@@ -1,0 +1,104 @@
+# vLLM server B — same Qwen2.5-0.5B model, second time-sliced GPU replica on the same card
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-qwen-b
+  namespace: fractional-gpu-demo
+  labels:
+    app: vllm-qwen-b
+    demo: fractional-gpu
+    model: qwen25-05b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-qwen-b
+  template:
+    metadata:
+      labels:
+        app: vllm-qwen-b
+        demo: fractional-gpu
+        model: qwen25-05b
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:v0.32.0
+        command: ["vllm", "serve"]
+        args:
+          - Qwen/Qwen2.5-0.5B-Instruct
+          - --max-model-len
+          - "2048"
+          - --gpu-memory-utilization
+          - "0.35"
+          - --port
+          - "8000"
+        env:
+          # OpenShift runs as non-root; redirect caches to writable emptyDir
+          - name: HOME
+            value: /tmp/home
+          - name: HF_HOME
+            value: /tmp/hf_home
+          - name: TRANSFORMERS_CACHE
+            value: /tmp/hf_home
+          - name: XDG_CACHE_HOME
+            value: /tmp/cache
+          - name: FLASHINFER_WORKSPACE_DIR
+            value: /tmp/flashinfer
+          - name: TRITON_CACHE_DIR
+            value: /tmp/triton
+        ports:
+        - containerPort: 8000
+          name: http
+        volumeMounts:
+          - name: tmp
+            mountPath: /tmp
+          - name: shm
+            mountPath: /dev/shm
+        resources:
+          requests:
+            cpu: "1"
+            memory: 4Gi
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: 8Gi
+            nvidia.com/gpu: "1"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 45
+          periodSeconds: 10
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 180
+          periodSeconds: 20
+          failureThreshold: 6
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-qwen-b
+  namespace: fractional-gpu-demo
+  labels:
+    app: vllm-qwen-b
+spec:
+  selector:
+    app: vllm-qwen-b
+  ports:
+  - name: http
+    port: 8000
+    targetPort: http

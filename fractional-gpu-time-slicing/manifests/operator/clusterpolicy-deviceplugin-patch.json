@@ -1,0 +1,10 @@
+{
+  "spec": {
+    "devicePlugin": {
+      "config": {
+        "name": "time-slicing-config",
+        "default": "a10g"
+      }
+    }
+  }
+}

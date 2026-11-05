@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fractional-gpu-demo
+  labels:
+    app.kubernetes.io/name: fractional-gpu-demo
+    app.kubernetes.io/part-of: gpu-as-a-service-examples

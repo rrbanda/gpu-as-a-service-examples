@@ -62,6 +62,7 @@ gpu-as-a-service-examples/
 | Use Case | What It Does | Key Technologies | Difficulty |
 |----------|-------------|------------------|------------|
 | [Heterogeneous GPU Tiered Inference](heterogeneous-gpu-tiered-inference/) | Pin models to specific GPU tiers (A100/H100/H200) in a mixed-GPU cluster, with optional intelligent request routing | Kueue ResourceFlavors, Hardware Profiles, vLLM tensor parallelism, llm-d EPP | Intermediate |
+| [GPU Time Slicing (vLLM)](fractional-gpu-time-slicing/) | RHOAI 3.5 Ch 8 GPU time slicing — pack two vLLM servers on one physical GPU (A10G; MIG not required) | NVIDIA GPU Operator time-slicing, vLLM | Beginner |
 
 Each use case includes:
 - **README.md** — Problem statement, architecture diagrams, step-by-step implementation guide with inline YAML, verification commands, and known gaps

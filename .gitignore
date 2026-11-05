@@ -8,3 +8,7 @@ draft-reply-*.md
 *.swo
 *~
 .DS_Store
+
+# Local cluster auth — never commit
+.tmp-kubeconfig
+.tmp-kubeconfig-*
