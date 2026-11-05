@@ -164,9 +164,9 @@ oc exec -n fractional-gpu-demo deploy/vllm-qwen-b -- \
 
 Sanitized live capture: [EVIDENCE.md](EVIDENCE.md) (re-verified 2026-11-05; no cluster URLs or credentials).
 
-## 2× A100 80GB customer sizing
+## 2× A100 80GB sizing
 
-If the target pool is **2× A100 80GB** (including “we have a 70B today” discussions), read **[A100-80GB-POC.md](A100-80GB-POC.md)** before changing the demo:
+If the target pool is **2× A100 80GB** (including “70B on these cards” discussions), read **[A100-80GB-POC.md](A100-80GB-POC.md)** before changing the demo:
 
 - **Track A:** time slicing + **small** models (proves packing)
 - **Track B:** one **70B TP=2** on dedicated GPUs (proves hosting; tight KV)

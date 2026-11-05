@@ -32,7 +32,7 @@ Track B — Prove 70B on 2× A100 80GB
   Expect limited concurrency / short context unless quantized
 ```
 
-| Customer idea | Viable on 2× A100 80GB? |
+| Requested idea | Viable on 2× A100 80GB? |
 |---|---|
 | 4 pods × “50% GPU” each running **70B** | **No** |
 | Time-slice so **two** 70B services share the 2 cards | **No** (memory) |
@@ -150,7 +150,7 @@ Pod/Job must request **`nvidia.com/gpu: "2"`** (or two GPU devices visible to on
 
 ---
 
-## What “50%” means (correct language for the customer)
+## What “50%” means (correct language)
 
 | Phrase | Correct meaning |
 |---|---|
