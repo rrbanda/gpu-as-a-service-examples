@@ -154,13 +154,15 @@ oc exec -n fractional-gpu-demo deploy/vllm-qwen-b -- \
 
 ## Success criteria
 
-- [ ] ConfigMap `time-slicing-config` exists in `nvidia-gpu-operator` with profile `a10g`
-- [ ] ClusterPolicy `devicePlugin.config.name=time-slicing-config` and `default=a10g`
-- [ ] Nodes show label `nvidia.com/device-plugin.config=a10g` (RHOAI verification)
-- [ ] Nodes show `nvidia.com/gpu.sharing-strategy=time-slicing` and `nvidia.com/gpu.replicas=2`
-- [ ] Both vLLM pods Ready; preferably on the same node
-- [ ] Each pod still requests `nvidia.com/gpu: 1` (time slicing is operator-side oversubscription)
-- [ ] Both `/v1/chat/completions` succeed
+- [x] ConfigMap `time-slicing-config` exists in `nvidia-gpu-operator` with profile `a10g`
+- [x] ClusterPolicy `devicePlugin.config.name=time-slicing-config` and `default=a10g`
+- [x] Nodes show label `nvidia.com/device-plugin.config=a10g` (RHOAI verification)
+- [x] Nodes show `nvidia.com/gpu.sharing-strategy=time-slicing` and `nvidia.com/gpu.replicas=2`
+- [x] Both vLLM pods Ready; preferably on the same node
+- [x] Each pod still requests `nvidia.com/gpu: 1` (time slicing is operator-side oversubscription)
+- [x] Both `/v1/chat/completions` succeed
+
+Sanitized live capture: [EVIDENCE.md](EVIDENCE.md) (re-verified 2026-11-05; no cluster URLs or credentials).
 
 ## Scope notes (accurate vs RHOAI)
 
