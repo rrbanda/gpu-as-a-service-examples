@@ -164,14 +164,68 @@ oc exec -n fractional-gpu-demo deploy/vllm-qwen-b -- \
 
 Sanitized live capture: [EVIDENCE.md](EVIDENCE.md) (re-verified 2026-11-05; no cluster URLs or credentials).
 
+## Operating model (who decides sharing)
+
+This section states how time slicing is meant to be operated per RHOAI 3.5 Chapter 8 and the NVIDIA GPU Operator model.
+
+### Admin decides the sharing policy (pool-level)
+
+Time slicing is **cluster/node pool configuration**, not a per-request percentage.
+
+| Admin controls | How |
+|---|---|
+| Slots per physical GPU | ConfigMap `resources[].replicas` (e.g. `2` or `4`) |
+| Which nodes use that profile | ClusterPolicy `devicePlugin.config` + label `nvidia.com/device-plugin.config=<profile>` on MachineSet/nodes |
+| Who may schedule onto that pool | Hardware Profiles, nodeSelectors, Kueue ResourceFlavors / quotas |
+
+Changing `replicas` is an admin change (device plugin reload). It is **not** driven by an inference team’s submit-time request.
+
+### Teams request whole GPU slots (workload-level)
+
+Inference teams still request integer GPU units:
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: "1"
+```
+
+They do **not** request `nvidia.com/gpu: 0.35`. That resource API does not exist with standard time slicing.
+
+`--gpu-memory-utilization 0.35` is an **application** setting (how much GPU memory vLLM may use). It is not the platform granting “35% of a card” as a Kubernetes allocation.
+
+### Same model or different models
+
+Time slicing schedules **pods/workloads**, not model identities. Two Deployments with different models can share one physical GPU the same way two replicas of one model can — each holds one slot; both share GPU memory with no isolation. Combined VRAM must fit or OOM risk rises (documented RHOAI warning).
+
+### Self-service choice without per-request %
+
+What admins can offer instead of “pick any percentage each time”:
+
+```text
+Pool A — exclusive GPU     (no time slicing / dedicated nodes)
+Pool B — shared 2-way      (replicas: 2)
+Pool C — shared 4-way      (replicas: 4)
+```
+
+Teams pick a **pool** (Hardware Profile / flavor). They still request `nvidia.com/gpu: 1` against that pool.
+
+### Dynamic capacity under load (separate from time slicing)
+
+If a service needs more GPU capacity as traffic grows, the supported pattern is **scale out more pods** (HPA/KEDA / InferenceService autoscaling), optionally with Kueue admission — not dynamically adding time-slice replicas for one workload, and not hot-resizing `nvidia.com/gpu` on a running pod.
+
+Time slicing only makes those scaled pods denser on physical hardware when each replica is small enough to share memory.
+
 ## Scope notes (accurate vs RHOAI)
 
 | Topic | Accurate statement |
 |---|---|
 | Time slicing vs MIG | Time slicing = shared memory, no fault isolation. MIG = hardware isolation (A100/H100/A30). A10G is not MIG-capable. |
-| Resource name | Pods still request `nvidia.com/gpu: 1`. There is no `nvidia.com/gpu: 0.5` API. |
+| Resource name | Pods still request `nvidia.com/gpu: 1`. There is no `nvidia.com/gpu: 0.5` API in RHOAI Ch 8 time slicing. |
+| Who sets sharing | Admin sets pool `replicas` and node profile labels. Teams do not dial a per-request slice percentage. |
 | `failRequestsGreaterThanOne` | Set to `false` to match the RHOAI 3.5 ConfigMap example. |
 | Workload packaging | Ch 8 does not prescribe InferenceService. These Deployments prove shared capacity. RHOAI dashboard serving can additionally use Hardware Profiles + ServingRuntimes after time slicing is enabled. |
+| Dynamic allocation | Scale out replicas under load; do not treat time slicing as elastic per-workload GPU resizing. |
 | Secrets | Manifests contain no cluster URLs, passwords, tokens, or pull secrets. Public HF model only. |
 
 ## Cleanup
